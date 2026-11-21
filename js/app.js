@@ -1,10 +1,11 @@
 // Game Training Sim.pente — app shell, screens and game flow.
 import {
-  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other,
+  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame,
 } from './rules.js';
 import { VARIANTS, COMING_LATER, getVariant, resolveVariant } from './variants.js';
 import { LEVELS, LEVEL_IDS } from './ai.js';
 import { computeStats } from './stats.js';
+import { buildReview, CLASSES, CLASS_ORDER, FOCUS_TIPS } from './review.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
 
@@ -19,7 +20,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup' };
+const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup', analysis: 'gts.analysis' };
 
 const ICON = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
@@ -71,11 +72,37 @@ try {
   worker.onmessage = (e) => {
     const p = pending.get(e.data.id);
     if (!p) return;
+    if (e.data.progress !== undefined) { if (p.onProgress) p.onProgress(e.data.progress); return; }
     pending.delete(e.data.id);
-    if (e.data.error) p.reject(new Error(e.data.error)); else p.resolve(e.data.move);
+    if (e.data.error) p.reject(new Error(e.data.error));
+    else p.resolve(e.data.analysis !== undefined ? e.data.analysis : e.data.move);
   };
   worker.onerror = () => { worker = null; for (const p of pending.values()) p.reject(new Error('worker failed')); pending.clear(); };
 } catch { worker = null; }
+
+function askAnalysis(entry, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (!worker) {
+      // Inline fallback (no worker available): analyse on the main thread in small steps.
+      import('./ai.js').then(async ({ analysePosition }) => {
+        const s = newGame(resolveVariant(entry.variantId, entry.options || {}));
+        const out = [];
+        for (let i = 0; i <= entry.moves.length; i++) {
+          const played = i < entry.moves.length ? entry.moves[i] : null;
+          out.push(analysePosition(s, played, { timeMs: 200 }));
+          onProgress((i + 1) / (entry.moves.length + 1));
+          if (played) applyMove(s, played[0], played[1]);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        resolve(out);
+      }).catch(reject);
+      return;
+    }
+    const id = ++reqSeq;
+    pending.set(id, { resolve, reject, onProgress });
+    worker.postMessage({ id, type: 'analyse', variantId: entry.variantId, options: entry.options || {}, moves: entry.moves });
+  });
+}
 
 async function askBot(state, level) {
   const snapshot = toSnapshot(state);
@@ -98,7 +125,7 @@ async function askBot(state, level) {
 
 const routes = {
   '': renderHome, '/': renderHome, '/setup': renderSetup, '/play': renderGame,
-  '/variants': renderVariants, '/stats': renderStats, '/learn': () => renderSoon('learn'), '/review': () => renderSoon('review'), '/puzzles': () => renderSoon('puzzles'),
+  '/variants': renderVariants, '/stats': renderStats, '/learn': () => renderSoon('learn'), '/review': renderArchive, '/puzzles': () => renderSoon('puzzles'),
 };
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
@@ -107,13 +134,15 @@ function parseHash() {
 }
 function route() {
   const { path, params } = parseHash();
-  const fn = routes[path] || renderHome;
+  const reviewId = path.startsWith('/review/') ? decodeURIComponent(path.slice(8)) : null;
+  const fn = reviewId ? () => renderReview(reviewId) : routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
-  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || 'home';
+  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || (reviewId ? 'review' : 'home');
   document.querySelectorAll('[data-nav]').forEach((a) => {
     if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   if (path !== '/play') leaveGame();
+  leaveReview();
   fn(params);
   window.scrollTo(0, 0);
 }
@@ -150,13 +179,24 @@ function renderHome() {
           <a href="#/stats" style="font-size:14px;font-weight:600">${(() => { const t = computeStats(history).total; return t.winPct === null ? 'Stats' : `${t.winPct}% wins · Stats`; })()} →</a>
         </div>
         <ul class="history">
-          ${history.slice(0, 6).map((h) => `<li><span>${esc(h.variantName)} <span class="muted">vs ${esc(h.botName)} (L${h.level})</span></span>
+          ${history.slice(0, 6).map((h) => `<li><span>${h.id && Array.isArray(h.moves) ? `<a href="#/review/${encodeURIComponent(h.id)}">${esc(h.variantName)}</a>` : esc(h.variantName)} <span class="muted">vs ${esc(h.botName)} (L${h.level})</span></span>
             <span class="${h.result === 'win' ? 'result-win' : h.result === 'loss' ? 'result-loss' : 'muted'}">${{ win: 'Won', loss: 'Lost', resigned: 'Resigned', unfinished: 'Unfinished', draw: 'Draw' }[h.result] || 'Draw'}</span></li>`).join('')}
         </ul>
-      </section>` : `
+      </section>` : '';
+
+  // Focus areas: what went wrong most often across your last 10 reviewed games.
+  const analysed = Object.values(store.get(KEYS.analysis, {})).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 10);
+  const focusTotals = {};
+  for (const a of analysed) for (const [tag, n] of a.focus || []) focusTotals[tag] = (focusTotals[tag] || 0) + n;
+  const topFocus = Object.entries(focusTotals).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const focusHtml = `
       <section class="card">
         <h3 style="font-size:18px">Focus areas</h3>
-        <p class="muted" style="margin:6px 0 0;font-size:14px">Play a few games and this panel will show what to work on: defending pairs, spotting trias, keeping the initiative. (Arrives with game review.)</p>
+        ${topFocus.length ? topFocus.map(([tag, n]) => `
+          <div style="margin-top:10px"><b>${esc(tag)}</b> <span class="muted" style="font-size:13px">· ${n} move${n > 1 ? 's' : ''} in your last ${analysed.length} reviewed game${analysed.length > 1 ? 's' : ''}</span>
+          <p style="margin:2px 0 0;font-size:14px">${esc(FOCUS_TIPS[tag] || '')}</p></div>`).join('')
+        : `<p class="muted" style="margin:6px 0 0;font-size:14px">${analysed.length ? 'No recurring problems in your reviewed games. Keep it up, or try a stronger bot.' : 'Review a game and this panel will show what to work on, such as defending pairs or blocking open threes.'}</p>`}
+        <a href="#/review" style="display:inline-block;margin-top:10px;font-size:14px;font-weight:600">Review your games →</a>
       </section>`;
 
   app.innerHTML = `
@@ -173,10 +213,10 @@ function renderHome() {
             <span><strong>Play a bot</strong><small>${LEVEL_IDS.length} levels · ${VARIANTS.length} variants</small></span></a>
           <a class="tile" href="#/variants">${ICON.grid}<span><strong>Variants</strong><small>Rules and what each trains</small></span></a>
           <a class="tile soon" href="#/learn">${ICON.book}<span><strong>Lessons</strong><small><span class="badge">SOON</span></small></span></a>
-          <a class="tile soon" href="#/review">${ICON.chart}<span><strong>Review</strong><small><span class="badge">SOON</span></small></span></a>
+          <a class="tile" href="#/review">${ICON.chart}<span><strong>Review</strong><small>Replay and analyse past games</small></span></a>
         </div>
       </div>
-      <div class="stack">${historyHtml}
+      <div class="stack">${focusHtml}${historyHtml}
         <section class="card">
           <h3 style="font-size:18px">New to Pente?</h3>
           <p style="margin:6px 0 0;font-size:14px">Make five in a row, or capture five pairs by bracketing them. Start with <b>Pip</b> (Level 1) and keep the coach on. The full rules are under <a href="#/variants">Variants</a>.</p>
@@ -208,7 +248,7 @@ function renderStats() {
     <div style="margin-bottom:14px">
       <div class="eyebrow">Your record</div>
       <h1 style="font-size:28px;margin-top:4px">Statistics</h1>
-      <p class="muted" style="margin:6px 0 0">Built from every game you finish. Unfinished games aren't counted${st.unfinished ? ` (${st.unfinished} so far)` : ''}.</p>
+      <p class="muted" style="margin:6px 0 0">Built from every game you finish. Unfinished games aren't counted${st.unfinished ? ` (${st.unfinished} so far)` : ''}. <a href="#/review">Browse all games →</a></p>
     </div>`;
   if (!t.played) {
     app.innerHTML = head + `<div class="card stack" style="max-width:640px"><p style="margin:0">No finished games yet. Your win rate, streaks and breakdowns will appear here after your first game.</p>
@@ -248,6 +288,300 @@ function renderStats() {
       <section class="card"><h2 style="font-size:20px">How you lose</h2>${ends(st.lossesBy)}
         ${st.undos ? `<p class="muted" style="margin:10px 0 0;font-size:13px">Undos used: ${st.undos}</p>` : ''}</section>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Game archive and review
+
+const RESULT_LABEL = { win: 'Won', loss: 'Lost', resigned: 'Resigned', draw: 'Draw', unfinished: 'Unfinished' };
+const CLASS_COLOR = {
+  best: '#16706A', excellent: '#2F7C77', good: '#5B8E8A', inaccuracy: '#B08900', mistake: '#D9661C', missedWin: '#D9661C', blunder: '#C0392B',
+};
+const ANALYSIS_VERSION = 1;
+const ANALYSIS_LIMIT = 60;
+
+function fmtDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+function reviewable(h) { return h && h.id && Array.isArray(h.moves) && h.moves.length > 0; }
+function cachedAnalysis(id) {
+  const c = store.get(KEYS.analysis, {})[id];
+  return c && c.v === ANALYSIS_VERSION ? c : null;
+}
+function saveAnalysis(id, plies, review) {
+  const cache = store.get(KEYS.analysis, {});
+  cache[id] = { v: ANALYSIS_VERSION, plies, acc: review.accuracy, focus: review.focus, at: Date.now() };
+  const ids = Object.keys(cache).sort((a, b) => (cache[b].at || 0) - (cache[a].at || 0));
+  for (const old of ids.slice(ANALYSIS_LIMIT)) delete cache[old];
+  store.set(KEYS.analysis, cache);
+}
+const clsBadge = (cls) => (cls ? `<span class="cls-badge" style="--c:${CLASS_COLOR[cls]}">${esc(CLASSES[cls].label)}</span>` : '');
+
+function renderArchive(params) {
+  const all = store.get(KEYS.history, []).filter(reviewable);
+  const f = params.get('f') || 'all';
+  const vf = params.get('v') || '';
+  let list = all.filter((h) => f === 'all' || (f === 'wins' ? h.result === 'win' : f === 'losses' ? (h.result === 'loss' || h.result === 'resigned') : h.result === f));
+  if (vf) list = list.filter((h) => h.variantId === vf);
+  const variantsUsed = [...new Set(all.map((h) => h.variantId))];
+  const link = (nf, nv) => `#/review?f=${nf}${nv ? `&v=${encodeURIComponent(nv)}` : ''}`;
+  const chip = (key, label) => `<a class="chip ${f === key ? 'on' : ''}" href="${link(key, vf)}">${label}</a>`;
+
+  app.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div class="eyebrow">Review</div>
+      <h1 style="font-size:28px;margin-top:4px">Your games</h1>
+      <p class="muted" style="margin:6px 0 0">Open any game to replay it move by move. The analysis rates each of your moves, explains it, and picks out the moments that decided the game.</p>
+    </div>
+    ${all.length ? `
+    <div class="filters">
+      ${chip('all', 'All')}${chip('wins', 'Wins')}${chip('losses', 'Losses')}${chip('unfinished', 'Unfinished')}
+      ${variantsUsed.length > 1 ? `<label class="sr-only" for="vf">Variant</label>
+      <select id="vf" class="select"><option value="">All variants</option>${variantsUsed.map((v) => `<option value="${esc(v)}" ${v === vf ? 'selected' : ''}>${esc(getVariant(v).name)}</option>`).join('')}</select>` : ''}
+    </div>
+    <div class="game-list">
+      ${list.map((h) => {
+        const c = cachedAnalysis(h.id);
+        const bot = LEVELS[h.level];
+        const res = RESULT_LABEL[h.result] || h.result;
+        return `<a class="game-row" href="#/review/${encodeURIComponent(h.id)}">
+          <span class="stone ${h.you === P2 ? 'p2' : 'p1'}" aria-hidden="true" style="width:22px;height:22px"></span>
+          <span class="gr-main"><b>${esc(h.variantName || getVariant(h.variantId).name)} vs ${esc(bot ? bot.name : h.botName)}</b>
+            <small class="muted">${esc(fmtDate(h.at))} · ${Math.ceil(h.moves.length / 2)} moves${c && c.acc !== null ? ` · accuracy ${c.acc}` : ''}</small></span>
+          <span class="pill ${h.result === 'win' ? 'win' : h.result === 'loss' || h.result === 'resigned' ? 'loss' : ''}">${esc(res)}</span>
+        </a>`;
+      }).join('') || '<p class="muted">No games match these filters.</p>'}
+    </div>` : `
+    <div class="card stack" style="max-width:640px"><p style="margin:0">No saved games yet. Every game you play from now on is kept here.</p>
+      <a class="btn primary" href="#/setup">Play a game ${ICON.arrow}</a></div>`}`;
+  $('#vf')?.addEventListener('change', (e) => { location.hash = link(f, e.target.value); });
+}
+
+let rv = null; // the review screen's state
+
+function leaveReview() {
+  if (!rv) return;
+  document.removeEventListener('keydown', rv.onKey);
+  rv.token++;
+  rv = null;
+}
+
+function renderReview(id) {
+  const entry = store.get(KEYS.history, []).find((h) => h.id === id);
+  if (!reviewable(entry)) {
+    app.innerHTML = `<div class="card stack" style="max-width:640px"><p style="margin:0">That game isn't available. Games played before the archive existed only kept their result.</p><a class="btn" href="#/review">Back to your games</a></div>`;
+    return;
+  }
+  const variant = resolveVariant(entry.variantId, entry.options || {});
+  const bot = LEVELS[entry.level] || LEVELS[1];
+  const names = { you: 'You', them: bot.name };
+  rv = { entry, variant, bot, names, cursor: entry.moves.length, review: null, showBest: true, token: 1, onKey: null };
+
+  app.innerHTML = `
+    <div class="game-head" style="margin-bottom:12px">
+      <a class="icon-btn" href="#/review" aria-label="Back to your games">${ICON.back}</a>
+      <div class="title">
+        <h1>${esc(getVariant(entry.variantId).name)} vs ${esc(bot.name)}</h1>
+        <div class="eyebrow">${esc(fmtDate(entry.at))} · ${esc(RESULT_LABEL[entry.result] || entry.result)} · you played ${entry.you === P2 ? 'Blue' : 'Gold'}</div>
+      </div>
+    </div>
+    <div class="game">
+      <div class="stack" style="gap:12px">
+        <div class="board-wrap" id="board"></div>
+        <div class="rv-nav">
+          <button class="icon-btn" type="button" data-nav-move="first" aria-label="First move">⏮</button>
+          <button class="icon-btn" type="button" data-nav-move="prev" aria-label="Previous move">◀</button>
+          <span class="mono" id="rv-counter"></span>
+          <button class="icon-btn" type="button" data-nav-move="next" aria-label="Next move">▶</button>
+          <button class="icon-btn" type="button" data-nav-move="last" aria-label="Last move">⏭</button>
+        </div>
+        <div class="rv-moves" id="rv-moves" aria-label="Moves"></div>
+      </div>
+      <div class="side">
+        <section class="card" id="rv-move" aria-live="polite"></section>
+        <section class="card" id="rv-summary"></section>
+        <section class="card" id="rv-graph" hidden></section>
+        <section class="card" id="rv-key" hidden></section>
+        <section class="card" id="rv-focus" hidden></section>
+      </div>
+    </div>`;
+
+  view = new BoardView($('#board'), { onPoint: () => {}, onHover: null });
+  const ro = new ResizeObserver(() => view && view.setLabels(view.svg.getBoundingClientRect().width >= 460));
+  ro.observe($('#board'));
+  app.querySelectorAll('[data-nav-move]').forEach((b) => b.addEventListener('click', () => rvStep(b.dataset.navMove)));
+  rv.onKey = (e) => {
+    if (e.target.closest('input, select, textarea')) return;
+    if (e.key === 'ArrowLeft') { rvStep('prev'); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { rvStep('next'); e.preventDefault(); }
+    else if (e.key === 'Home') rvStep('first');
+    else if (e.key === 'End') rvStep('last');
+  };
+  document.addEventListener('keydown', rv.onKey);
+
+  const cached = cachedAnalysis(id);
+  if (cached) {
+    rv.review = buildReview(entry, cached.plies, names);
+    rvUpdate(true);
+  } else {
+    rvUpdate(true);
+    rvAnalyse();
+  }
+}
+
+async function rvAnalyse() {
+  const r = rv;
+  const token = r.token;
+  const box = $('#rv-summary');
+  const setProgress = (p) => {
+    if (rv !== r || r.token !== token) return;
+    box.innerHTML = `<h2 style="font-size:20px">Analysing your game</h2>
+      <p class="muted" style="margin:6px 0 10px;font-size:14px">The engine is checking every move. This happens once per game, on your device.</p>
+      <div class="progress"><div style="width:${Math.round(p * 100)}%"></div></div>
+      <div class="mono muted" style="font-size:12px;margin-top:6px">${Math.round(p * 100)}%</div>`;
+  };
+  setProgress(0);
+  try {
+    const plies = await askAnalysis(r.entry, setProgress);
+    if (rv !== r || r.token !== token) return;
+    r.review = buildReview(r.entry, plies, r.names);
+    saveAnalysis(r.entry.id, plies, r.review);
+    rvUpdate(true);
+  } catch (err) {
+    console.error(err);
+    if (rv === r) box.innerHTML = '<p style="margin:0">The analysis hit a problem. Reload the page to try again.</p>';
+  }
+}
+
+function rvStep(where) {
+  if (!rv) return;
+  const n = rv.entry.moves.length;
+  rv.cursor = where === 'first' ? 0 : where === 'last' ? n : where === 'prev' ? Math.max(0, rv.cursor - 1) : where === 'next' ? Math.min(n, rv.cursor + 1) : Number(where);
+  rvUpdate();
+}
+
+function rvRetry(ply) {
+  const e = rv.entry;
+  const last = store.get(KEYS.setup, {});
+  startGame({
+    variantId: e.variantId, level: e.level, side: e.you === P2 ? 'p2' : 'p1', coach: true,
+    coachMode: last.coachMode || 'quiet', tournamentRule: (e.options || {}).tournamentRule !== false,
+    capturePairs: (e.options || {}).capturePairs || 5,
+  }, e.moves.slice(0, ply));
+}
+
+function rvUpdate(full = false) {
+  const r = rv;
+  if (!r || !view) return;
+  const { entry, review } = r;
+  const n = entry.moves.length;
+  const k = r.cursor;
+  const state = replay(r.variant, entry.moves.slice(0, k));
+  const m = k > 0 ? (review ? review.moves[k - 1] : { ply: k - 1, x: entry.moves[k - 1][0], y: entry.moves[k - 1][1], name: coordName(...entry.moves[k - 1]), isYou: (k - 1) % 2 === (entry.you === P2 ? 1 : 0) }) : null;
+  const rings = m && m.cls ? [{ x: m.x, y: m.y, color: CLASS_COLOR[m.cls] }] : [];
+  const showBest = m && m.best && m.cls && m.cls !== 'best' && r.showBest && state.board[m.best[1] * 19 + m.best[0]] === 0;
+  view.render(state, { last: m ? [m.x, m.y] : null, rings, hints: showBest ? [m.best] : [] });
+  $('#rv-counter').textContent = `${k} / ${n}`;
+
+  // Move card
+  const who = (mv) => (mv.isYou ? 'You' : r.bot.name);
+  let card;
+  if (!m) card = '<h2 style="font-size:20px">Start of the game</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Step through with the arrows, tap a move below, or jump to a key moment.</p>';
+  else {
+    const rank = m.cls ? CLASSES[m.cls].rank : 0;
+    card = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <h2 style="font-size:20px">${Math.floor(m.ply / 2) + 1}. ${esc(who(m))}: <span class="mono">${esc(m.name)}</span></h2>${clsBadge(m.cls)}
+      </div>
+      ${review ? `<p style="margin:8px 0 0;font-size:14px">${esc(m.text)}</p>` : '<p class="muted" style="margin:8px 0 0;font-size:14px">Ratings appear when the analysis finishes.</p>'}
+      ${m.best && m.cls && m.cls !== 'best' ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+        <button class="btn" type="button" id="rv-best"><span>${r.showBest ? 'Hide' : 'Show'} best move (<span class="mono">${esc(m.bestName)}</span>)</span></button>
+        ${m.isYou && rank >= 3 ? `<button class="btn primary" type="button" id="rv-retry">Retry from here</button>` : ''}
+      </div>` : ''}`;
+  }
+  $('#rv-move').innerHTML = card;
+  $('#rv-best')?.addEventListener('click', () => { r.showBest = !r.showBest; rvUpdate(); });
+  $('#rv-retry')?.addEventListener('click', () => rvRetry(m.ply));
+
+  // Move strip
+  const strip = $('#rv-moves');
+  if (full || !strip.children.length) {
+    strip.innerHTML = entry.moves.map((mv, i) => {
+      const rm = review ? review.moves[i] : null;
+      const dot = rm && rm.cls ? `<i style="background:${CLASS_COLOR[rm.cls]}"></i>` : '';
+      return `<button type="button" class="mv ${i % 2 === 0 ? 'g' : 'b'}" data-ply="${i + 1}">${i % 2 === 0 ? `<span class="n">${i / 2 + 1}.</span>` : ''}${dot}${coordName(mv[0], mv[1])}</button>`;
+    }).join('');
+    strip.querySelectorAll('[data-ply]').forEach((b) => b.addEventListener('click', () => rvStep(b.dataset.ply)));
+  }
+  strip.querySelectorAll('.mv').forEach((b) => b.classList.toggle('on', Number(b.dataset.ply) === k));
+  const on = strip.querySelector('.mv.on');
+  if (on) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+
+  if (!review) return;
+
+  if (full) {
+    // Summary
+    const order = CLASS_ORDER.filter((c) => review.counts[c]);
+    $('#rv-summary').innerHTML = `
+      <div style="display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap">
+        <div><div class="eyebrow">Your accuracy</div><div class="big-num">${review.accuracy ?? '—'}</div></div>
+        <div><div class="eyebrow">${esc(r.bot.name)}</div><div class="big-num muted" style="font-size:24px">${review.theirAccuracy ?? '—'}</div></div>
+      </div>
+      <div class="cls-counts">${order.map((c) => `<span>${clsBadge(c)} <b class="mono">${review.counts[c]}</b></span>`).join('')}</div>`;
+
+    // Graph
+    const W = 400, H = 120;
+    const pts = review.curve.map((v, i) => `${(i / Math.max(1, n)) * W},${(H - 4 - v * (H - 8)).toFixed(1)}`).join(' ');
+    const keys = review.keyMoments.map((km) => {
+      const i = km.ply + 1;
+      return `<circle cx="${(i / Math.max(1, n)) * W}" cy="${(H - 4 - review.curve[i] * (H - 8)).toFixed(1)}" r="5" fill="${CLASS_COLOR[km.cls]}" stroke="#fff" stroke-width="1.5"></circle>`;
+    }).join('');
+    const g = $('#rv-graph');
+    g.hidden = false;
+    g.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><h2 style="font-size:20px">Your winning chances</h2><span class="muted" style="font-size:12px">tap to jump</span></div>
+      <svg id="rv-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:120px;margin-top:8px;cursor:pointer;display:block" role="img" aria-label="Your winning chances through the game">
+        <rect x="0" y="0" width="${W}" height="${H / 2}" style="fill:var(--good-bg)"></rect>
+        <rect x="0" y="${H / 2}" width="${W}" height="${H / 2}" style="fill:var(--warn-bg)"></rect>
+        <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" style="stroke:var(--border)" stroke-dasharray="3 4"></line>
+        <polyline points="${pts}" fill="none" style="stroke:var(--accent-text)" stroke-width="2" vector-effect="non-scaling-stroke"></polyline>
+        ${keys}
+        <line id="rv-cursor" x1="0" y1="0" x2="0" y2="${H}" style="stroke:var(--text)" stroke-width="1" opacity=".5" vector-effect="non-scaling-stroke"></line>
+      </svg>
+      <div style="display:flex;justify-content:space-between" class="mono muted"><span style="font-size:11px">start</span><span style="font-size:11px">end</span></div>`;
+    $('#rv-svg').addEventListener('click', (e) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      rvStep(String(Math.round(((e.clientX - rect.left) / rect.width) * n)));
+    });
+
+    // Key moments
+    const kbox = $('#rv-key');
+    kbox.hidden = false;
+    kbox.innerHTML = `<h2 style="font-size:20px">Key moments</h2>${review.keyMoments.length ? review.keyMoments.map((km) => `
+      <div class="km-row">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b class="mono">${Math.floor(km.ply / 2) + 1}. ${esc(km.name)}</b>${clsBadge(km.cls)}</div>
+        <p style="margin:4px 0 8px;font-size:14px">${esc(km.text)}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" type="button" data-goto="${km.ply + 1}">Go to move</button>
+          <button class="btn primary" type="button" data-retry="${km.ply}">Retry from here</button>
+        </div>
+      </div>`).join('') : '<p class="muted" style="margin:6px 0 0;font-size:14px">No mistakes big enough to count as key moments. Well played.</p>'}`;
+    kbox.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => { rvStep(b.dataset.goto); window.scrollTo({ top: 0, behavior: 'smooth' }); }));
+    kbox.querySelectorAll('[data-retry]').forEach((b) => b.addEventListener('click', () => rvRetry(Number(b.dataset.retry))));
+
+    // Focus areas
+    const fbox = $('#rv-focus');
+    if (review.focus.length) {
+      fbox.hidden = false;
+      fbox.innerHTML = `<h2 style="font-size:20px">What to work on</h2>${review.focus.map(([tag, count]) => `
+        <div style="margin-top:10px"><b>${esc(tag)}</b> <span class="muted" style="font-size:13px">· ${count} move${count > 1 ? 's' : ''}</span>
+        <p style="margin:2px 0 0;font-size:14px">${esc(FOCUS_TIPS[tag] || '')}</p></div>`).join('')}`;
+    } else fbox.hidden = true;
+  }
+  const cur = $('#rv-cursor');
+  if (cur) { const x = (k / Math.max(1, n)) * 400; cur.setAttribute('x1', x); cur.setAttribute('x2', x); }
 }
 
 // ---------------------------------------------------------------------------
@@ -425,23 +759,25 @@ function archiveGame(g, result, reason) {
   const def = getVariant(g.variantId);
   const bot = LEVELS[g.level] || LEVELS[1];
   const history = store.get(KEYS.history, []);
+  const id = (g.startedAt || Date.now()).toString(36) + Math.random().toString(36).slice(2, 6);
   history.unshift({
-    id: (g.startedAt || Date.now()).toString(36) + Math.random().toString(36).slice(2, 6),
+    id,
     variantId: g.variantId, options: g.options, you: g.you, level: g.level,
     variantName: def.name, botName: bot.name, result, reason,
     moves: g.moves, plies: g.moves.length, undos: g.undos || 0,
     startedAt: g.startedAt || null, at: Date.now(),
   });
   store.set(KEYS.history, history.slice(0, ARCHIVE_LIMIT));
+  return id;
 }
 
-function startGame(settings) {
+function startGame(settings, initialMoves = []) {
   const you = settings.side === 'random' ? (Math.random() < 0.5 ? P1 : P2) : settings.side === 'p2' ? P2 : P1;
   const options = { tournamentRule: settings.tournamentRule, capturePairs: settings.capturePairs };
   // A game left unfinished is kept in the archive rather than thrown away.
   const previous = store.get(KEYS.game, null);
   if (previous && previous.moves && previous.moves.length) archiveGame(previous, 'unfinished', null);
-  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: [], startedAt: Date.now() };
+  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now() };
   store.set(KEYS.game, saved);
   game = null;
   if (location.hash === '#/play') route(); else location.hash = '#/play';
@@ -454,7 +790,7 @@ function loadGame() {
     const variant = resolveVariant(saved.variantId, saved.options);
     const state = replay(variant, saved.moves);
     return {
-      ...saved, state, variant, def: getVariant(saved.variantId), bot: LEVELS[saved.level],
+      ...saved, state, variant, def: getVariant(saved.variantId), bot: LEVELS[saved.level] || LEVELS[1],
       preview: null, hover: null, warn: null, hints: [], notes: [], thinking: false, resignArmed: false, undos: saved.undos || 0,
       coachMode: saved.coachMode || 'quiet', revealed: false,
     };
@@ -833,7 +1169,7 @@ function finishGame(resigned = false) {
   const g = game;
   const s = g.state;
   const result = s.winner === g.you ? 'win' : s.winner === 0 ? 'draw' : resigned ? 'resigned' : 'loss';
-  archiveGame({
+  g.archivedId = archiveGame({
     variantId: g.variantId, options: g.options, you: g.you, level: g.level,
     moves: s.history.map((h) => [h.x, h.y]), startedAt: g.startedAt, undos: g.undos,
   }, result, s.winReason);
@@ -849,7 +1185,7 @@ function showResult(result) {
   const sub = REASONS[s.winReason] || '';
   const tip = result === 'win'
     ? (LEVELS[g.level + 1] ? `Ready for ${LEVELS[g.level + 1].name} (Level ${g.level + 1})?` : 'Try a variant that trains a different skill.')
-    : 'Use Undo to step back and try the critical moment again, or play another game.';
+    : 'Review the game to see where it turned, or use Undo to try the critical moment again.';
   const wrap = document.createElement('div');
   wrap.className = 'result';
   wrap.innerHTML = `
@@ -859,7 +1195,8 @@ function showResult(result) {
       <p class="muted" style="margin:0">${esc(sub)}</p>
       <p style="margin:12px 0 0;font-size:14px">${esc(tip)}</p>
       <div class="row">
-        <button class="btn primary" type="button" id="again">Play again</button>
+        ${g.archivedId && s.ply > 1 ? `<a class="btn primary" href="#/review/${encodeURIComponent(g.archivedId)}">Review this game</a>` : ''}
+        <button class="btn ${g.archivedId && s.ply > 1 ? '' : 'primary'}" type="button" id="again">Play again</button>
         ${result !== 'resigned' ? '<button class="btn" type="button" id="look">Look at the board</button>' : ''}
         <a class="btn" href="#/setup">Change settings</a>
       </div>

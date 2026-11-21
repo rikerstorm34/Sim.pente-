@@ -35,8 +35,7 @@ Variants exist to train specific skills; each must ship with clear rules and a "
    - ✅ Every game (finished or abandoned) is archived with its full move list in `gts.history` (up to 300).
 2. ✅ Engine v2 (2026-11-21): capture-aware VCF threat search, iterative-deepening alpha-beta with a transposition table and time budget, 5 levels (Pip, Juno, Ludo, Vega, Orion). Each level beat the one below in test matches (9–1, 10–0, 5–3, 4–2). Hints use Vega (L4).
    - ✅ Stats screen (`#/stats`, `js/stats.js`): win rate, streaks, by opponent/variant/side, endings, captures (replayed from saved moves).
-3. Game review: winning-chances graph, move labels with reasons, key moments with retry (the evidence-backed core)
-   - Riker's request: a **game archive** to browse, replay and analyse ANY past game (data already saved since 2026-11-21).
+3. ✅ Game review + archive (2026-11-21): `#/review` lists every saved game (filters); `#/review/<id>` replays it with an analysis run once in the Web Worker (`analysePosition` in ai.js: iterative deepening ~400 ms/position, VCF both ways, opponent's best reply) and cached in `gts.analysis` (newest 60). `js/review.js` rates moves (Best/Excellent/Good/Inaccuracy/Mistake/Missed win/Blunder by lost winning chance), explains them, builds the smoothed winning-chances curve, key moments ("Retry from here" starts a game from that position) and focus tags. Home's Focus areas card sums focus tags over the last 10 reviewed games.
 4. Lessons (rules → shapes → captures → initiative → openings → threat sequences → endgame)
 5. Puzzles from the player's own mistakes, spaced repetition
 6. Remaining variant openings (D-Pente, DK, Swap2); multiplayer is deferred

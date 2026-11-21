@@ -545,3 +545,123 @@ export function chooseMove(state, level = 2, rng = Math.random, opts = {}) {
   }
   return { x: pick.x, y: pick.y };
 }
+
+// ---------------------------------------------------------------------------
+// Analysis for game review
+
+/** Winning chances (0..1) for the side a score belongs to. */
+export function winChance(score) {
+  if (score >= NEAR_WIN / 2) return 0.995;
+  if (score <= -NEAR_WIN / 2) return 0.005;
+  return 1 / (1 + Math.exp(-score / 1500));
+}
+export const FORCED = NEAR_WIN / 2;
+
+/**
+ * Analyse one position: the engine's best move and score, and the score of the move actually
+ * played, both from the same search (iterative deepening within a time budget) so they can be
+ * compared fairly. Also checks whether the played move hands the opponent a forced win.
+ * Scores are from the point of view of the side to move.
+ */
+export function analysePosition(state, played = null, { timeMs = 400, maxDepth = 8, rootWidth = 12, width = 8, vcfDepth = 10 } = {}) {
+  const s = cloneState(state);
+  if (s.winner !== null) {
+    const score = s.winner === s.toMove ? WIN : s.winner === 0 ? 0 : -WIN;
+    return { best: null, bestScore: score, playedScore: null, forcedWin: false, allowsForced: null };
+  }
+  const started = now();
+  const me = s.toMove;
+  const opp = other(me);
+  const same = (m) => played && m && m[0] === played[0] && m[1] === played[1];
+  const vcfOk = fiveWinsOutright(s.variant);
+
+  // Does a move hand the opponent a forced win by continuous fours?
+  const allowsForced = (m) => {
+    if (!vcfOk) return null;
+    applyMove(s, m[0], m[1]);
+    const r = s.winner === null ? findVCF(s, opp, vcfDepth, now() + 150, 8000) : null;
+    undoMove(s);
+    return r;
+  };
+
+  // Immediate win.
+  const wins = winningPointsFor(s, me);
+  if (wins.length) {
+    let playedScore = null, allows = null;
+    if (played) {
+      if (wins.some((w) => same(w))) playedScore = WIN;
+      else {
+        applyMove(s, played[0], played[1]);
+        playedScore = -evaluateDeep(s, 3, width);
+        undoMove(s);
+        allows = allowsForced(played);
+        if (allows) playedScore = Math.min(playedScore, -NEAR_WIN);
+      }
+    }
+    return { best: wins[0], bestScore: WIN, playedScore, forcedWin: true, allowsForced: allows ? [allows.x, allows.y] : null };
+  }
+
+  // Forced win by continuous fours for the side to move.
+  const vcf = vcfOk ? findVCF(s, me, vcfDepth, now() + 300, 20000) : null;
+
+  const theirWins = winningPointsFor(s, opp);
+  const extra = theirWins.slice();
+  if (played) extra.push(played);
+  if (vcf) extra.push([vcf.x, vcf.y]);
+  let results = orderedMoves(s, me, rootWidth, extra).map((m) => ({ x: m.x, y: m.y, val: m.q }));
+  const searcher = new Searcher(s, { width });
+  searcher.deadline = started + timeMs;
+  let completed = null;
+  try {
+    for (let depth = 2; depth <= maxDepth; depth++) {
+      const out = [];
+      for (const m of results) {
+        searcher.make(m.x, m.y);
+        const val = -searcher.negamax(depth - 1, -Infinity, Infinity, 1);
+        searcher.unmake();
+        out.push({ x: m.x, y: m.y, val });
+      }
+      out.sort((a, b) => b.val - a.val);
+      results = out;
+      completed = out;
+      if (Math.abs(out[0].val) >= NEAR_WIN || now() > started + timeMs * 0.45) break;
+    }
+  } catch (e) {
+    if (!(e instanceof Timeout)) throw e;
+    while (searcher.stack.length) searcher.unmake();
+  }
+  const final = completed || results;
+  let best = [final[0].x, final[0].y];
+  let bestScore = final[0].val;
+  const playedRow = played ? final.find((r) => same([r.x, r.y])) : null;
+  let playedScore = playedRow ? playedRow.val : null;
+  if (vcf) {
+    bestScore = Math.max(bestScore, NEAR_WIN);
+    best = [vcf.x, vcf.y];
+    if (same(best)) playedScore = NEAR_WIN;
+  }
+
+  // The opponent's best answer to the played move, from the search's memory.
+  let reply = null;
+  if (played && s.winner === null) {
+    searcher.make(played[0], played[1]);
+    const hit = searcher.tt.get(searcher.key());
+    if (hit && hit.m && s.winner === null) reply = hit.m;
+    searcher.unmake();
+  }
+
+  // A played move that hands over a forced win is losing, unless the best move does too.
+  let allows = null;
+  if (played && !same(best) && playedScore !== null && playedScore < NEAR_WIN) {
+    allows = allowsForced(played);
+    if (allows && !allowsForced(best)) playedScore = Math.min(playedScore, -NEAR_WIN);
+    else if (allows) allows = null;
+  }
+  return { best, bestScore, playedScore, forcedWin: !!vcf, allowsForced: allows ? [allows.x, allows.y] : null, reply };
+}
+
+function evaluateDeep(s, depth, width) {
+  if (depth <= 0 || s.winner !== null) return evaluate(s);
+  const searcher = new Searcher(s, { width });
+  return searcher.negamax(depth, -Infinity, Infinity, 0);
+}

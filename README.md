@@ -4,16 +4,17 @@ A training app for the game of Pente: practice bots at five levels, a live coach
 
 **Play:** https://rikerstorm34.github.io/Sim.pente-/
 
-## What's in this version (milestone 1)
+## What's in it
 
 - **Play a bot:** Pip (Novice), Juno (Apprentice), Ludo (Tactician), Vega (Strategist) and Orion (Master). The upper levels search for forced wins made of continuous five-threats, and stop yours.
 - **Coach:** warns you about open pairs, win threats and open threes, flags capture chances, and checks a move you're previewing before you place it. Quiet by default: notes stay hidden until you tap to see them. Hints on request.
+- **Game review:** every game is saved. Open any one to replay it move by move. The analysis rates each move (Best to Blunder) and explains it in plain words. It also draws your winning chances through the game, picks out the key moments with a "Retry from here" button, and sums up what to work on.
 - **Statistics:** win rate, streaks, results by opponent, variant and side, how you win and lose, and capture counts, built up from every game.
 - **Phone-friendly input:** tap to preview a move, then confirm. With a mouse, just click.
 - **Eight variants,** each with plain-language rules and what it trains: Pente, Keryo-Pente, Gomoku, G-Pente, Boat-Pente, Poof-Pente, Double Five and Five + Captures.
 - Undo, resign, move list, game saved automatically, recent results on the home screen.
 
-Coming in later milestones: a stronger engine, game review with move ratings, lessons, puzzles, and the D-Pente / Swap2 openings.
+Coming in later milestones: lessons, puzzles, more variants (Connect6, D-Pente, Swap2) and related games.
 
 ## Running it locally
 
@@ -43,6 +44,7 @@ Uses Node's built-in test runner (Node 18+); there are no dependencies to instal
 | `js/variants.js` | Variant configs plus their rules text and "what it trains" |
 | `js/ai.js` | The bots: threat search (VCF), alpha-beta with a time budget, five levels |
 | `js/stats.js` | Statistics computed from the saved game archive |
+| `js/review.js` | Game review: move ratings, explanations, key moments, focus areas |
 | `js/ai-worker.js` | Runs the bot in a Web Worker so the page stays responsive |
 | `js/coach.js` | The in-game coach's notes and move-preview warnings |
 | `js/board.js` | SVG board rendering and tap/click handling |

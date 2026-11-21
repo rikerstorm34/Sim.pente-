@@ -131,6 +131,9 @@ export class BoardView {
     for (const [x, y] of marks.hints || []) {
       el('circle', { cx: px(x), cy: px(y), r: R - 1, fill: 'rgba(142,214,207,0.35)', stroke: '#1E7F79', 'stroke-width': 2.4, class: 'pulse' }, mk);
     }
+    for (const r of marks.rings || []) {
+      el('circle', { cx: px(r.x), cy: px(r.y), r: R + 3, fill: 'none', stroke: r.color, 'stroke-width': 3 }, mk);
+    }
     if (marks.ghost) {
       const [x, y, who] = marks.ghost;
       el('circle', { cx: px(x), cy: px(y), r: R, fill: who === P1 ? 'url(#gts-p1)' : 'url(#gts-p2)', opacity: 0.55 }, mk);

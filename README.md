@@ -10,6 +10,7 @@ A training app for the game of Pente: practice bots at five levels, a live coach
 - **Coach:** warns you about open pairs, win threats and open threes, flags capture chances, and checks a move you're previewing before you place it. Quiet by default: notes stay hidden until you tap to see them. Hints on request.
 - **Game review:** every game is saved. Open any one to replay it move by move. The analysis rates each move (Best to Blunder) and explains it in plain words. It also draws your winning chances through the game, picks out the key moments with a "Retry from here" button, and sums up what to work on.
 - **Statistics:** win rate, streaks, results by opponent, variant and side, how you win and lose, and capture counts, built up from every game.
+- **Patterns & openings:** your play style, the shapes you build and how the bots answer them, and your openings as Gold and Blue with win rates and the bots' replies.
 - **Phone-friendly input:** tap to preview a move, then confirm. With a mouse, just click.
 - **Eight variants,** each with plain-language rules and what it trains: Pente, Keryo-Pente, Gomoku, G-Pente, Boat-Pente, Poof-Pente, Double Five and Five + Captures.
 - Undo, resign, move list, game saved automatically, recent results on the home screen.
@@ -44,6 +45,7 @@ Uses Node's built-in test runner (Node 18+); there are no dependencies to instal
 | `js/variants.js` | Variant configs plus their rules text and "what it trains" |
 | `js/ai.js` | The bots: threat search (VCF), alpha-beta with a time budget, five levels |
 | `js/stats.js` | Statistics computed from the saved game archive |
+| `js/patterns.js` | Play style, shape and opening analytics |
 | `js/review.js` | Game review: move ratings, explanations, key moments, focus areas |
 | `js/ai-worker.js` | Runs the bot in a Web Worker so the page stays responsive |
 | `js/coach.js` | The in-game coach's notes and move-preview warnings |

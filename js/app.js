@@ -6,6 +6,7 @@ import { VARIANTS, COMING_LATER, getVariant, resolveVariant } from './variants.j
 import { LEVELS, LEVEL_IDS } from './ai.js';
 import { computeStats } from './stats.js';
 import { buildReview, CLASSES, CLASS_ORDER, FOCUS_TIPS } from './review.js';
+import { computePatterns, REPLY_LABELS } from './patterns.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
 
@@ -241,15 +242,21 @@ function statTable(rows) {
     </div>`).join('')}</div>`;
 }
 
-function renderStats() {
+function renderStats(params = new URLSearchParams()) {
   const st = computeStats(store.get(KEYS.history, []));
   const t = st.total;
+  const tab = params.get('tab') === 'patterns' ? 'patterns' : 'overview';
   const head = `
     <div style="margin-bottom:14px">
       <div class="eyebrow">Your record</div>
       <h1 style="font-size:28px;margin-top:4px">Statistics</h1>
       <p class="muted" style="margin:6px 0 0">Built from every game you finish. Unfinished games aren't counted${st.unfinished ? ` (${st.unfinished} so far)` : ''}. <a href="#/review">Browse all games →</a></p>
+    </div>
+    <div class="filters" role="tablist" aria-label="Statistics views">
+      <a class="chip ${tab === 'overview' ? 'on' : ''}" role="tab" aria-selected="${tab === 'overview'}" href="#/stats">Overview</a>
+      <a class="chip ${tab === 'patterns' ? 'on' : ''}" role="tab" aria-selected="${tab === 'patterns'}" href="#/stats?tab=patterns">Patterns &amp; openings</a>
     </div>`;
+  if (tab === 'patterns' && t.played) { renderPatterns(head, params); return; }
   if (!t.played) {
     app.innerHTML = head + `<div class="card stack" style="max-width:640px"><p style="margin:0">No finished games yet. Your win rate, streaks and breakdowns will appear here after your first game.</p>
       <a class="btn primary" href="#/setup">Play a game ${ICON.arrow}</a></div>`;
@@ -288,6 +295,108 @@ function renderStats() {
       <section class="card"><h2 style="font-size:20px">How you lose</h2>${ends(st.lossesBy)}
         ${st.undos ? `<p class="muted" style="margin:10px 0 0;font-size:13px">Undos used: ${st.undos}</p>` : ''}</section>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Patterns, play style and openings
+
+/** A small board diagram around the centre. stones: [{ o: [dx, dy], c: 1|2, ring?: true }] */
+function openingSvg(stones, size = 118) {
+  const reach = Math.max(3, ...stones.map((st) => Math.max(Math.abs(st.o[0]), Math.abs(st.o[1])))) + 1;
+  const n = reach * 2;
+  const cell = (size - 12) / n;
+  const pos = (v) => 6 + (v + reach) * cell;
+  let lines = '';
+  for (let i = 0; i <= n; i++) {
+    const v = 6 + i * cell;
+    lines += `<line x1="6" y1="${v}" x2="${size - 6}" y2="${v}"></line><line x1="${v}" y1="6" x2="${v}" y2="${size - 6}"></line>`;
+  }
+  const r = Math.min(cell * 0.42, 9);
+  const dots = stones.map((st) => `
+    <circle cx="${pos(st.o[0])}" cy="${pos(st.o[1])}" r="${r}" fill="${st.c === 1 ? 'url(#og1)' : 'url(#og2)'}" ${st.ring ? 'opacity=".55"' : ''}></circle>
+    ${st.ring ? `<circle cx="${pos(st.o[0])}" cy="${pos(st.o[1])}" r="${r + 2.5}" fill="none" stroke="#D9661C" stroke-width="2" stroke-dasharray="3 2"></circle>` : ''}`).join('');
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true" class="opening-svg">
+    <defs>
+      <radialGradient id="og1" cx="34%" cy="28%" r="75%"><stop offset="0%" stop-color="#FFF6DA"/><stop offset="40%" stop-color="#F2C55C"/><stop offset="100%" stop-color="#9A6410"/></radialGradient>
+      <radialGradient id="og2" cx="34%" cy="28%" r="75%"><stop offset="0%" stop-color="#E3EAFF"/><stop offset="40%" stop-color="#5C7FE6"/><stop offset="100%" stop-color="#1B2F8C"/></radialGradient>
+    </defs>
+    <rect x="0" y="0" width="${size}" height="${size}" rx="8" fill="#F7F5EE"></rect>
+    <g stroke="#C3C9DC" stroke-width="1">${lines}</g>${dots}</svg>`;
+}
+
+function replyBar(replies) {
+  const parts = [['blocked', 'var(--accent)'], ['captured', '#D9661C'], ['counter', '#B08900'], ['elsewhere', 'var(--track)']];
+  return `<div class="stackbar" role="img" aria-label="${parts.map(([k]) => `${REPLY_LABELS[k]} ${replies[k] || 0}%`).join(', ')}">
+    ${parts.map(([k, c]) => (replies[k] ? `<span style="width:${replies[k]}%;background:${c}"></span>` : '')).join('')}</div>
+    <div class="legend">${parts.filter(([k]) => replies[k]).map(([k, c]) => `<span><i style="background:${c}"></i>${REPLY_LABELS[k]} ${replies[k]}%</span>`).join('')}</div>`;
+}
+
+function renderPatterns(head, params) {
+  const vf = params.get('v') || '';
+  const pt = computePatterns(store.get(KEYS.history, []), { variantId: vf || undefined });
+  const st = pt.style;
+  const filter = pt.variants.length > 1 ? `
+    <label class="sr-only" for="pvf">Variant</label>
+    <select id="pvf" class="select" style="margin-bottom:12px"><option value="">All variants</option>
+      ${pt.variants.map((v) => `<option value="${esc(v.id)}" ${v.id === vf ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>` : '';
+  const few = pt.games < 5 ? `<p class="muted" style="margin:0 0 12px;font-size:14px">Based on ${pt.games} game${pt.games === 1 ? '' : 's'}. Patterns get more reliable after 10 or more.</p>` : '';
+  const metric = (label, value, note) => `<div class="stat-row" style="display:flex;justify-content:space-between;gap:10px"><span>${label}${note ? `<br><small class="muted">${note}</small>` : ''}</span><b class="mono">${value}</b></div>`;
+
+  const openingCards = (list, asGold) => list.length ? list.slice(0, 6).map((o) => {
+    const base = asGold
+      ? [{ o: [0, 0], c: 1 }, { o: o.offsets[0], c: 2 }, { o: o.offsets[1], c: 1 }]
+      : [{ o: [0, 0], c: 1 }, { o: o.offsets[0], c: 2 }];
+    const top = o.replies.slice(0, 3);
+    return `<div class="opening">
+      <div class="opening-main">${openingSvg(base)}
+        <div><b>${esc(asGold ? `Your 2nd stone: ${o.parts[1]}` : `Your reply: ${o.parts[0]}`)}</b>
+          <div class="muted" style="font-size:13px">${asGold ? `after Blue played ${esc(o.parts[0])}` : 'to the centre stone'}</div>
+          <div style="margin-top:6px"><span class="mono">${o.wins}–${o.games - o.wins}</span> · <b>${o.winPct}%</b> wins · ${o.games} game${o.games > 1 ? 's' : ''}</div>
+          ${bar(o.winPct)}</div>
+      </div>
+      <div class="eyebrow" style="margin:12px 0 6px">How the bots answer</div>
+      <div class="replies">${top.map((r) => `<div class="reply">${openingSvg([...base, { o: r.offset, c: asGold ? 2 : 1, ring: true }], 84)}
+        <div style="font-size:12px"><b>${esc(r.name)}</b><br><span class="muted">${r.games}× · you won ${r.winPct}%</span></div></div>`).join('')}</div>
+    </div>`;
+  }).join('') : '<p class="muted" style="margin:6px 0 0;font-size:14px">No games yet with these colours.</p>';
+
+  app.innerHTML = head + filter + few + `
+    <div class="home-grid">
+      <section class="card">
+        <div class="eyebrow">Your play style</div>
+        <h2 style="font-size:28px;margin-top:4px">${esc(st.label)}</h2>
+        <p style="margin:6px 0 0;font-size:14px">${esc(st.blurb)}</p>
+        <div class="stat-rows">
+          ${metric('Forcing moves', `${st.aggression ?? 0}%`, 'threats, captures and capture threats')}
+          ${metric('Defensive moves', `${st.defence ?? 0}%`, 'blocking fours, open threes and captures')}
+          ${metric('Captures per game', st.capturesPerGame)}
+          ${metric('Capture threats per game', st.capThreatsPerGame)}
+          ${metric('Pairs left exposed per game', st.exposedPerGame, 'lower is better')}
+          ${metric('Double threats per game', st.doubleThreatsPerGame, 'two threats in one move: usually winning')}
+        </div>
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">Shapes you build</h2>
+        <p class="muted" style="margin:4px 0 0;font-size:13px">How often you make each shape, how those games went, and how the bots respond.</p>
+        ${pt.shapes.length ? pt.shapes.map((sh) => `
+          <div class="shape-row">
+            <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>${esc(sh.label)}</b><span class="mono" style="font-size:12px">${sh.perGame}/game</span></div>
+            <div class="muted" style="font-size:12px;margin:2px 0 6px">Won ${sh.winPctWith ?? '—'}% of games with it · kept the initiative ${sh.keptInitiativePct ?? '—'}% of the time</div>
+            ${replyBar(sh.replies)}
+          </div>`).join('') : '<p class="muted" style="margin:6px 0 0;font-size:14px">No shapes recorded yet.</p>'}
+      </section>
+    </div>
+    <section class="card" style="margin-top:14px">
+      <h2 style="font-size:20px">Your openings as Gold</h2>
+      <p class="muted" style="margin:4px 0 0;font-size:13px">Where you put your second stone, grouped so mirror images and rotations count as the same opening. The faded ring shows each bot answer.</p>
+      <div class="openings">${openingCards(pt.openings.asGold, true)}</div>
+    </section>
+    <section class="card" style="margin-top:14px">
+      <h2 style="font-size:20px">Your openings as Blue</h2>
+      <p class="muted" style="margin:4px 0 0;font-size:13px">How you answer Gold's centre stone, and where the bots put their second stone in reply.</p>
+      <div class="openings">${openingCards(pt.openings.asBlue, false)}</div>
+    </section>`;
+  $('#pvf')?.addEventListener('change', (e) => { location.hash = `#/stats?tab=patterns${e.target.value ? `&v=${encodeURIComponent(e.target.value)}` : ''}`; });
 }
 
 // ---------------------------------------------------------------------------

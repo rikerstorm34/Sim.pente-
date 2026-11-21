@@ -330,7 +330,7 @@ function renderLearn() {
     <div style="margin-bottom:14px">
       <div class="eyebrow">Learn</div>
       <h1 style="font-size:28px;margin-top:4px">Lessons</h1>
-      <p class="muted" style="margin:6px 0 0;max-width:720px">Seven units that build on each other. Each lesson explains one idea, then gives you puzzles that get harder (some take several moves) and a practice game against a bot.</p>
+      <p class="muted" style="margin:6px 0 0;max-width:720px">Nine units that build on each other, from the rules to master-level ideas, with a lesson for every variant. Each lesson explains one idea, then gives you puzzles that get harder (some take several moves) and a practice game against a bot.</p>
     </div>
     ${next ? `<section class="card stack" style="margin-bottom:14px">
       <div class="eyebrow" style="color:var(--aqua)">${lessonsDone() ? 'Continue' : 'Start here'} · Unit ${next.unitId.slice(1)} · ${esc(next.unitTitle)}</div>
@@ -531,7 +531,8 @@ function renderPuzzle(step, body) {
     const token = r.token;
     setTimeout(() => {
       if (ls !== r || r.token !== token) return;
-      const res = checkMove(P.state, x, y, sg.goal);
+      // The stage's own answer is verified by the tests, so accept it without re-running a slow search.
+      const res = coordName(x, y) === sg.answer ? checkMove(P.state, x, y, { kind: 'legal' }) : checkMove(P.state, x, y, sg.goal);
       P.busy = false;
       if (!res.ok) {
         P.wrong++;

@@ -1,4 +1,5 @@
-// Lesson content: 7 units that build on each other, from the rules to threat sequences.
+// Lesson content: units that build on each other, from the rules to master-level ideas.
+// Units 1–7 are here; unit 8 (variants) and unit 9 (master ideas) are in lessons-more.js.
 // Every puzzle is checked by tests/lessons.test.js: each stage's answer must meet its goal,
 // and each scripted reply must be legal. Text is original writing.
 //
@@ -8,14 +9,11 @@
 //            success text, and an optional scripted reply for the opponent before the next stage
 //   play   – a practice game against a bot, optionally from a set position, with a goal
 
-const read = (title, text, board) => ({ type: 'read', title, text, board });
-const puzzle = (title, level, setup, stages) => ({ type: 'puzzle', title, level, setup, stages });
-const stage = (prompt, goal, answer, hint, success, reply) => ({ prompt, goal, answer, hint, success, reply });
-const play = (title, text, game, goal = 'win') => ({ type: 'play', title, text, game, goal });
+import { BUSY } from './lesson-boards.js';
+import { read, puzzle, stage, play, G, ALL } from './lesson-dsl.js';
+import { MORE_UNITS } from './lessons-more.js';
 
-const G = (kind, extra = {}) => ({ kind, ...extra });
-const ALL = (...goals) => ({ all: goals });
-
+// Step builders live in lesson-dsl.js so the extra units (lessons-more.js) can share them.
 export const UNITS = [
   // ===========================================================================
   {
@@ -437,6 +435,13 @@ export const UNITS = [
     ],
   },
 ];
+
+UNITS.push(...MORE_UNITS);
+
+// Busy boards: each puzzle gets the generated clutter for its key (lesson id | title).
+for (const u of UNITS) for (const l of u.lessons) for (const st of l.steps) {
+  if (st.type === 'puzzle' && BUSY[`${l.id}|${st.title}`]) st.setup.extra = BUSY[`${l.id}|${st.title}`];
+}
 
 export const ALL_LESSONS = UNITS.flatMap((u) => u.lessons.map((l) => ({ ...l, unitId: u.id, unitTitle: u.title })));
 export const getLesson = (id) => ALL_LESSONS.find((l) => l.id === id) || null;

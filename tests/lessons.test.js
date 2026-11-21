@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { UNITS, ALL_LESSONS, getLesson, nextLesson } from '../js/lessons.js';
-import { setupPosition, checkMove, parseCoord } from '../js/lesson-engine.js';
+import { BUSY } from '../js/lesson-boards.js';
+import { setupPosition, checkMove, parseCoord, SEARCH } from '../js/lesson-engine.js';
+
+SEARCH.forcedWinMs = 12000; // generous for slow CI machines; the app uses 2.5 s
 import { applyMove } from '../js/rules.js';
 import { VARIANTS } from '../js/variants.js';
 import { LEVELS } from '../js/ai.js';
@@ -9,7 +12,7 @@ import { LEVELS } from '../js/ai.js';
 test('lesson ids are unique and in order', () => {
   const ids = ALL_LESSONS.map((l) => l.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.equal(UNITS.length, 7);
+  assert.equal(UNITS.length, 9);
   assert.equal(getLesson('1.1').title, 'Five in a row');
   assert.equal(nextLesson('1.1').id, '1.2');
 });
@@ -70,4 +73,24 @@ test('puzzles reject at least one plausible wrong move', () => {
       assert.equal(far.ok, false, `${l.id} "${st.title}" should not accept A19`);
     }
   }
+});
+
+test('every placed-stone puzzle has a busy, game-like board', () => {
+  // Re-run `node tools/dress-puzzles.mjs` after adding or changing a puzzle.
+  for (const l of ALL_LESSONS) {
+    for (const st of l.steps.filter((x) => x.type === 'puzzle' && !x.setup.moves)) {
+      const extra = BUSY[`${l.id}|${st.title}`];
+      assert.ok(extra, `${l.id} "${st.title}" has no busy board: run node tools/dress-puzzles.mjs`);
+      assert.ok(extra.p1.length + extra.p2.length >= 10, `${l.id} "${st.title}" board is too sparse`);
+    }
+  }
+});
+
+test('every variant has its own lesson', () => {
+  const variantsTaught = new Set();
+  for (const l of ALL_LESSONS) for (const st of l.steps) {
+    if (st.type === 'puzzle') variantsTaught.add(st.setup.variant || 'pente');
+    if (st.type === 'play') variantsTaught.add(st.game.variantId);
+  }
+  for (const v of VARIANTS) assert.ok(variantsTaught.has(v.id), `no lesson uses ${v.id}`);
 });

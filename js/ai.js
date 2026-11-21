@@ -83,7 +83,7 @@ export function evaluate(s, me = s.toMove) {
 
   let minx = SIZE, maxx = -1, miny = SIZE, maxy = -1;
   for (let i = 0; i < b.length; i++) {
-    if (b[i] === EMPTY) continue;
+    if (b[i] !== 1 && b[i] !== 2) continue; // empty, or a wall outside a smaller board
     const x = i % SIZE, y = (i - x) / SIZE;
     if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
   }
@@ -101,8 +101,9 @@ export function evaluate(s, me = s.toMove) {
       for (let k = 0; k < 5; k++) {
         const i = idx(x + dx * k, y + dy * k);
         const cell = b[i];
-        if (cell === 1) a++; else if (cell === 2) c++; else empty = i;
+        if (cell === 1) a++; else if (cell === 2) c++; else if (cell === EMPTY) empty = i; else { a = c = 9; break; }
       }
+      if (a === 9) continue; // the window runs off a smaller board
       if (a && !c) { line[1] += EVAL_WINDOW[a]; if (a === 4 && !fourPts[1].includes(empty)) fourPts[1].push(empty); }
       else if (c && !a) { line[2] += EVAL_WINDOW[c]; if (c === 4 && !fourPts[2].includes(empty)) fourPts[2].push(empty); }
     }
@@ -171,7 +172,7 @@ function windowDelta(board, x, y, p) {
       let mine = 0, theirs = 0;
       for (let k = 0; k < 5; k++) {
         const c = board[idx(sx + dx * k, sy + dy * k)];
-        if (c === p) mine++; else if (c === opp) theirs++;
+        if (c === p) mine++; else if (c !== EMPTY) theirs++; // the opponent, or a wall
       }
       if (!theirs) { before += WINDOW[mine]; after += WINDOW[Math.min(5, mine + 1)]; }
     }

@@ -9,6 +9,7 @@ export const CENTER = 9;
 export const EMPTY = 0;
 export const P1 = 1; // moves first (gold)
 export const P2 = 2; // moves second (blue)
+export const WALL = 3; // points outside a smaller board (Renju is 15×15, drawn in the middle of the 19×19 grid)
 
 const COLS = 'ABCDEFGHJKLMNOPQRST';
 export const AXES = [[1, 0], [0, 1], [1, 1], [1, -1]];
@@ -19,12 +20,18 @@ export const xOf = (i) => i % SIZE;
 export const yOf = (i) => (i - (i % SIZE)) / SIZE;
 export const inBounds = (x, y) => x >= 0 && y >= 0 && x < SIZE && y < SIZE;
 export const other = (p) => (p === P1 ? P2 : P1);
-export const coordName = (x, y) => COLS[x] + (SIZE - y);
+// Coordinate names follow the board being shown: 19×19 (default) or a smaller board centred in
+// the grid (Renju, 15×15: columns A–P without I, rows 1–15). Call setFrame() when a screen opens.
+let FRAME_N = SIZE, FRAME_OFF = 0;
+export function setFrame(n = SIZE) { FRAME_N = n; FRAME_OFF = (SIZE - n) / 2; }
+export const frameSize = () => FRAME_N;
+export const coordName = (x, y) => COLS[x - FRAME_OFF] + (FRAME_N - (y - FRAME_OFF));
 
 export function parseCoord(name) {
-  const x = COLS.indexOf(name[0].toUpperCase());
-  const y = SIZE - parseInt(name.slice(1), 10);
-  if (x < 0 || !inBounds(x, y)) throw new Error('Bad coordinate ' + name);
+  const col = COLS.indexOf(name[0].toUpperCase());
+  const row = parseInt(name.slice(1), 10);
+  const x = col + FRAME_OFF, y = FRAME_OFF + FRAME_N - row;
+  if (col < 0 || col >= FRAME_N || row < 1 || row > FRAME_N || !inBounds(x, y)) throw new Error('Bad coordinate ' + name);
   return [x, y];
 }
 
@@ -38,7 +45,7 @@ export function parseCoord(name) {
 export function newGame(variant) {
   return {
     variant,
-    board: new Int8Array(SIZE * SIZE),
+    board: emptyBoard(variant),
     toMove: P1,
     ply: 0,                 // stones placed so far by both players
     captured: [0, 0, 0],    // captured[p] = opponent stones player p has captured
@@ -48,6 +55,17 @@ export function newGame(variant) {
     winReason: null,        // 'five' | 'two-fives' | 'captures' | 'five-and-captures' | 'board-full'
     history: [],
   };
+}
+
+/** An empty board; on a smaller board (Renju) the points outside it are walls. */
+export function emptyBoard(variant) {
+  const b = new Int8Array(SIZE * SIZE);
+  const n = variant && variant.boardSize;
+  if (n && n < SIZE) {
+    const lo = (SIZE - n) / 2, hi = lo + n - 1;
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) if (x < lo || x > hi || y < lo || y > hi) b[idx(x, y)] = WALL;
+  }
+  return b;
 }
 
 export function cloneState(s) {
@@ -110,7 +128,7 @@ const cheb = (x, y) => Math.max(Math.abs(x - CENTER), Math.abs(y - CENTER));
 /** Why a move is illegal, or null if it is legal. */
 export function illegalReason(s, x, y) {
   if (s.winner !== null) return 'The game is over.';
-  if (!inBounds(x, y)) return 'Off the board.';
+  if (!inBounds(x, y) || s.board[idx(x, y)] === WALL) return 'Off the board.';
   if (s.board[idx(x, y)] !== EMPTY) return 'That point is taken.';
   const opening = s.variant.opening;
   if (opening !== 'free' && s.ply === 0 && (x !== CENTER || y !== CENTER)) {
@@ -123,10 +141,108 @@ export function illegalReason(s, x, y) {
       if (d === 3 || d === 4) return 'G-Pente rule: not 3 or 4 points from the centre along its row or column.';
     }
   }
+  if (opening === 'renju' || opening === 'ninuki') {
+    // Classic first moves: Gold on the centre, Blue next to it; Gold's second stone within two
+    // points of the centre (Renju) or at least three points away (Ninuki-Renju).
+    if (s.ply === 1 && cheb(x, y) > 1) return 'The second stone goes right next to the centre.';
+    if (s.ply === 2 && opening === 'renju' && cheb(x, y) > 2) return 'Gold\'s second stone goes within two points of the centre.';
+    if (s.ply === 2 && opening === 'ninuki' && cheb(x, y) < 3) return 'Gold\'s second stone goes at least 3 points from the centre.';
+  }
+  const v = s.variant;
+  if ((v.renju && s.toMove === P1) || v.noDoubleThree) return forbiddenReason(s, x, y);
   return null;
 }
 
 export const isLegal = (s, x, y) => illegalReason(s, x, y) === null;
+
+// ---------------------------------------------------------------------------
+// Forbidden shapes (Renju for Gold; double threes for both sides in Ninuki-Renju)
+
+/** Length of the unbroken run of `p` through (x, y) along axis `a` (the point counts as p). */
+function runLen(board, x, y, p, a) {
+  const [dx, dy] = AXES[a];
+  let n = 1;
+  for (let k = 1; inBounds(x + dx * k, y + dy * k) && board[idx(x + dx * k, y + dy * k)] === p; k++) n++;
+  for (let k = 1; inBounds(x - dx * k, y - dy * k) && board[idx(x - dx * k, y - dy * k)] === p; k++) n++;
+  return n;
+}
+
+/**
+ * The shapes a stone of `p` at (x, y) makes, line by line (the stone must already be on the board).
+ * five: an exact five; overline: six or more; fours: lines where one more stone makes exactly five;
+ * threes: lines where one more stone makes a straight four (four with both ends free, each
+ * extension an exact five).
+ */
+export function shapesThrough(board, x, y, p) {
+  const out = { five: false, overline: false, fours: 0, threes: 0 };
+  for (let a = 0; a < 4; a++) {
+    const len = runLen(board, x, y, p, a);
+    if (len === 5) out.five = true;
+    if (len >= 6) out.overline = true;
+    if (len >= 5) continue;
+    const [dx, dy] = AXES[a];
+    let four = false, three = false;
+    for (let k = -4; k <= 4 && !(four && three); k++) {
+      if (!k) continue;
+      const qx = x + dx * k, qy = y + dy * k;
+      if (!inBounds(qx, qy) || board[idx(qx, qy)] !== EMPTY) continue;
+      // Is q on the same unbroken stretch as (x, y) once filled? Check the run through q covers (x, y).
+      board[idx(qx, qy)] = p;
+      const lenQ = runLen(board, qx, qy, p, a);
+      // The run through q must include (x, y): every point between them is p.
+      let joined = true;
+      const step = k > 0 ? 1 : -1;
+      for (let j = step; j !== k; j += step) if (board[idx(x + dx * j, y + dy * j)] !== p) { joined = false; break; }
+      if (joined) {
+        if (lenQ === 5) four = true;
+        else if (lenQ === 4 && isStraightFour(board, qx, qy, p, a)) three = true;
+      }
+      board[idx(qx, qy)] = EMPTY;
+    }
+    if (four) out.fours++;
+    else if (three) out.threes++;
+  }
+  return out;
+}
+
+// A four (through q) with a free point at each end, where each end makes exactly five.
+function isStraightFour(board, qx, qy, p, a) {
+  const [dx, dy] = AXES[a];
+  let sx = qx, sy = qy;
+  while (inBounds(sx - dx, sy - dy) && board[idx(sx - dx, sy - dy)] === p) { sx -= dx; sy -= dy; }
+  const ex = sx + dx * 4, ey = sy + dy * 4; // the point after the four
+  const bx = sx - dx, by = sy - dy;          // the point before it
+  const free = (cx, cy) => inBounds(cx, cy) && board[idx(cx, cy)] === EMPTY;
+  const notP = (cx, cy) => !inBounds(cx, cy) || board[idx(cx, cy)] !== p;
+  return free(bx, by) && free(ex, ey) && notP(bx - dx, by - dy) && notP(ex + dx, ey + dy);
+}
+
+function forbiddenReason(s, x, y) {
+  const v = s.variant;
+  const p = s.toMove;
+  const i = idx(x, y);
+  s.board[i] = p;
+  const sh = shapesThrough(s.board, x, y, p);
+  s.board[i] = EMPTY;
+  if (sh.five) return null; // a five always wins, whatever else it makes
+  if (v.renju) {
+    if (sh.overline) return 'Forbidden for Gold: six or more in a row (an overline).';
+    if (sh.fours >= 2) return 'Forbidden for Gold: two fours at once (a double four).';
+    if (sh.threes >= 2) return 'Forbidden for Gold: two open threes at once (a double three).';
+    return null;
+  }
+  if (sh.threes >= 2) {
+    // Ninuki-Renju allows a double three when it stops the opponent's five.
+    const opp = other(p);
+    s.board[i] = opp;
+    const stopsFive = shapesThrough(s.board, x, y, opp).five;
+    s.board[i] = EMPTY;
+    const breaksFive = s.pendingFive && s.pendingFive.player === opp &&
+      capturesAt(s.board, x, y, p, v.captureSizes).some((c) => s.pendingFive.cells.includes(c));
+    if (!stopsFive && !breaksFive) return 'Not allowed: two open threes at once (a double three).';
+  }
+  return null;
+}
 
 export function legalMoves(s) {
   const out = [];
@@ -211,8 +327,9 @@ export function runThrough(board, x, y, player, axis) {
 }
 
 // A winning line: five in a row (six in Connect6). With overlineWins off, longer lines don't count.
-function isFiveRun(len, variant) {
+function isFiveRun(len, variant, player) {
   const n = variant.lineToWin || 5;
+  if (variant.renju) return player === P1 ? len === n : len >= n; // Gold needs exactly five
   return variant.overlineWins ? len >= n : len === n;
 }
 
@@ -234,7 +351,7 @@ export function fivesThrough(board, x, y, player, variant) {
   const out = [];
   for (let a = 0; a < 4; a++) {
     const cells = runThrough(board, x, y, player, a);
-    if (isFiveRun(cells.length, variant)) out.push({ axis: a, cells });
+    if (isFiveRun(cells.length, variant, player)) out.push({ axis: a, cells });
   }
   return out;
 }
@@ -405,7 +522,7 @@ export function nearbyMoves(s, dist = 2) {
   if (s.ply === 0) return legalMoves(s);
   const mark = new Uint8Array(SIZE * SIZE);
   for (let i = 0; i < s.board.length; i++) {
-    if (s.board[i] === EMPTY) continue;
+    if (s.board[i] !== P1 && s.board[i] !== P2) continue;
     const x = xOf(i), y = yOf(i);
     for (let dy = -dist; dy <= dist; dy++) for (let dx = -dist; dx <= dist; dx++) {
       const nx = x + dx, ny = y + dy;

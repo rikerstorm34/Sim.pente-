@@ -1,12 +1,10 @@
 // Draws the board as SVG and turns taps/clicks into board coordinates.
-import { SIZE, CENTER, EMPTY, P1, P2, idx, coordName } from './rules.js';
+import { SIZE, CENTER, EMPTY, P1, P2, idx, coordName, frameSize } from './rules.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const CELL = 32;
 const MARGIN = 31;           // room for coordinate labels
 const BAND = 16;             // decorative Greek-key frame
-const INNER = MARGIN * 2 + CELL * (SIZE - 1);
-const TOTAL = INNER + BAND * 2;
 const R = 13.5;              // stone radius
 const COLS = 'ABCDEFGHJKLMNOPQRST';
 
@@ -26,7 +24,11 @@ export class BoardView {
   constructor(host, handlers) {
     this.host = host;
     this.handlers = handlers;
-    this.svg = el('svg', { viewBox: `0 0 ${TOTAL} ${TOTAL}`, class: 'board-svg', role: 'img' });
+    // A smaller board (Renju, 15×15) is the middle of the 19×19 grid: the view is cropped to it.
+    this.n = frameSize();
+    this.off = (SIZE - this.n) / 2;
+    const o = this.off * CELL, total = MARGIN * 2 + CELL * (this.n - 1) + BAND * 2;
+    this.svg = el('svg', { viewBox: `${o} ${o} ${total} ${total}`, class: 'board-svg', role: 'img' });
     this.buildStatic();
     this.layers = {
       stones: el('g', {}, this.svg),
@@ -53,30 +55,34 @@ export class BoardView {
     el('feDropShadow', { dx: 0, dy: 1.2, stdDeviation: 1.1, 'flood-color': '#141A3A', 'flood-opacity': 0.45 }, shadow);
 
     // Frame
-    el('rect', { x: 0, y: 0, width: TOTAL, height: TOTAL, rx: 14, fill: '#8ED6CF' }, this.svg);
-    el('rect', { x: 14, y: 2, width: TOTAL - 28, height: 12, fill: 'url(#gts-keyH)' }, this.svg);
-    el('rect', { x: 14, y: TOTAL - 14, width: TOTAL - 28, height: 12, fill: 'url(#gts-keyH)' }, this.svg);
-    el('rect', { x: 2, y: 14, width: 12, height: TOTAL - 28, fill: 'url(#gts-keyV)' }, this.svg);
-    el('rect', { x: TOTAL - 14, y: 14, width: 12, height: TOTAL - 28, fill: 'url(#gts-keyV)' }, this.svg);
-    el('rect', { x: BAND, y: BAND, width: INNER, height: INNER, rx: 4, fill: '#F7F5EE', stroke: '#2F44B0', 'stroke-width': 2 }, this.svg);
+    const n = this.n, off = this.off, o = off * CELL;
+    const inner = MARGIN * 2 + CELL * (n - 1), total = inner + BAND * 2;
+    el('rect', { x: o, y: o, width: total, height: total, rx: 14, fill: '#8ED6CF' }, this.svg);
+    el('rect', { x: o + 14, y: o + 2, width: total - 28, height: 12, fill: 'url(#gts-keyH)' }, this.svg);
+    el('rect', { x: o + 14, y: o + total - 14, width: total - 28, height: 12, fill: 'url(#gts-keyH)' }, this.svg);
+    el('rect', { x: o + 2, y: o + 14, width: 12, height: total - 28, fill: 'url(#gts-keyV)' }, this.svg);
+    el('rect', { x: o + total - 14, y: o + 14, width: 12, height: total - 28, fill: 'url(#gts-keyV)' }, this.svg);
+    el('rect', { x: o + BAND, y: o + BAND, width: inner, height: inner, rx: 4, fill: '#F7F5EE', stroke: '#2F44B0', 'stroke-width': 2 }, this.svg);
 
     // Grid
+    const lo = off, hi = off + n - 1;
     const grid = el('g', { stroke: '#A3ABC6', 'stroke-width': 1.1, 'shape-rendering': 'crispEdges' }, this.svg);
-    for (let i = 0; i < SIZE; i++) {
-      el('line', { x1: px(0), y1: px(i), x2: px(SIZE - 1), y2: px(i) }, grid);
-      el('line', { x1: px(i), y1: px(0), x2: px(i), y2: px(SIZE - 1) }, grid);
+    for (let i = lo; i <= hi; i++) {
+      el('line', { x1: px(lo), y1: px(i), x2: px(hi), y2: px(i) }, grid);
+      el('line', { x1: px(i), y1: px(lo), x2: px(i), y2: px(hi) }, grid);
     }
-    // Star points: centre and the tournament-rule square.
-    for (const [x, y] of [[CENTER, CENTER], [6, 6], [6, 12], [12, 6], [12, 12]]) {
+    // Star points: the centre, plus the tournament-rule square (19×19) or the four corner points (15×15).
+    const stars = n === SIZE ? [[6, 6], [6, 12], [12, 6], [12, 12]] : [[lo + 3, lo + 3], [lo + 3, hi - 3], [hi - 3, lo + 3], [hi - 3, hi - 3]];
+    for (const [x, y] of [[CENTER, CENTER], ...stars]) {
       el('circle', { cx: px(x), cy: px(y), r: 3.6, fill: '#6E7899' }, this.svg);
     }
     // Labels
     this.labels = el('g', { class: 'board-labels', fill: '#6E7899', 'font-size': 10.5, 'font-family': 'JetBrains Mono, monospace', 'text-anchor': 'middle' }, this.svg);
-    for (let i = 0; i < SIZE; i++) {
-      el('text', { x: px(i), y: BAND + 14 }, this.labels).textContent = COLS[i];
-      el('text', { x: px(i), y: BAND + INNER - 5 }, this.labels).textContent = COLS[i];
-      el('text', { x: BAND + 10, y: px(i) + 4 }, this.labels).textContent = String(SIZE - i);
-      el('text', { x: BAND + INNER - 10, y: px(i) + 4 }, this.labels).textContent = String(SIZE - i);
+    for (let i = 0; i < n; i++) {
+      el('text', { x: px(lo + i), y: o + BAND + 14 }, this.labels).textContent = COLS[i];
+      el('text', { x: px(lo + i), y: o + BAND + inner - 5 }, this.labels).textContent = COLS[i];
+      el('text', { x: o + BAND + 10, y: px(lo + i) + 4 }, this.labels).textContent = String(n - i);
+      el('text', { x: o + BAND + inner - 10, y: px(lo + i) + 4 }, this.labels).textContent = String(n - i);
     }
   }
 
@@ -89,7 +95,7 @@ export class BoardView {
       const p = pt.matrixTransform(m.inverse());
       const x = Math.round((p.x - BAND - MARGIN) / CELL);
       const y = Math.round((p.y - BAND - MARGIN) / CELL);
-      if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) return null;
+      if (x < this.off || y < this.off || x >= this.off + this.n || y >= this.off + this.n) return null;
       // Ignore taps far from any intersection (e.g. on the frame).
       if (Math.hypot(p.x - px(x), p.y - px(y)) > CELL * 0.75) return null;
       return [x, y];
@@ -118,7 +124,7 @@ export class BoardView {
     mk.replaceChildren();
     for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
       const c = s.board[idx(x, y)];
-      if (c === EMPTY) continue;
+      if (c !== P1 && c !== P2) continue; // empty, or outside a smaller board
       el('circle', { cx: px(x), cy: px(y), r: R, fill: c === P1 ? 'url(#gts-p1)' : 'url(#gts-p2)', filter: 'url(#gts-shadow)' }, stones);
     }
     if (marks.last) {

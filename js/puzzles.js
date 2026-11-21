@@ -18,7 +18,8 @@ import { PUZZLE_BANK } from './puzzle-bank.js';
 import { PLAYABLE_1983, masterEntry, roundOf, openingOf } from './master-games.js';
 import { ALL_LESSONS } from './lessons.js';
 import { coordName, parseCoord, CENTER } from './rules.js';
-import { swapColours, swapColourWords } from './lesson-engine.js';
+import { swapColours, swapColourWords, canSwapColours } from './lesson-engine.js';
+import { getVariant } from './variants.js';
 
 export const THEMES = {
   chain: { name: 'Chains of fours', blurb: 'Every move a four, until one can\'t be stopped.' },
@@ -113,6 +114,9 @@ export function mineItems(history = [], analysis = {}) {
   for (const h of history) {
     const a = analysis[h.id];
     if (!a || !Array.isArray(a.plies) || !Array.isArray(h.moves)) continue;
+    // Forced-win puzzles need one-stone turns on the full board (not Connect6 or Renju).
+    const cfg = getVariant(h.variantId).config;
+    if (cfg.twoStones || cfg.boardSize) continue;
     const youIdx = h.you === 2 ? 1 : 0;
     a.plies.forEach((pa, ply) => {
       if (!pa || ply % 2 !== youIdx || ply >= h.moves.length || !pa.forcedWin || !pa.best) return;
@@ -141,7 +145,7 @@ export function collection(history, analysis) {
 
 /** The looks a puzzle can take: [{ sym, swap }]. */
 export function variationsOf(item) {
-  if (item.source === 'lessons') return item.step.setup.moves ? [{ sym: 0, swap: false }] : [{ sym: 0, swap: false }, { sym: 0, swap: true }];
+  if (item.source === 'lessons') return item.step.setup.moves || !canSwapColours(item.step.setup) ? [{ sym: 0, swap: false }] : [{ sym: 0, swap: false }, { sym: 0, swap: true }];
   const out = [];
   for (const swap of [false, true]) for (let sym = 0; sym < 8; sym++) out.push({ sym, swap });
   return out;

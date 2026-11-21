@@ -274,6 +274,50 @@ export const MORE_UNITS = [
             { variantId: 'connect6', level: 2, side: 'p1', coachMode: 'quiet' }),
         ],
       },
+      {
+        id: '8.11', title: 'Renju', summary: 'A 15×15 board, and moves Gold isn\'t allowed to make.',
+        steps: [
+          read('What changes', [
+            'Renju is Gomoku on a smaller 15×15 board with no captures. Moving first is a big edge in five-in-a-row games, so Renju takes some of it away from Gold.',
+            'Gold may not make an overline (six or more in a row), a double four, or a double three with one stone, unless that stone makes five. Gold also wins only with exactly five. Blue has none of these limits.',
+            'As Gold, check every move for a forbidden shape before you commit. As Blue, look for Gold\'s forbidden points: if the only way to block your four is a point Gold can\'t play, the four wins.',
+            'Trains: precise threat play, and turning the opponent\'s rules against them.',
+          ], { variant: 'renju', p1: ['G8', 'J8', 'H9', 'H10'], p2: [], hints: ['H8'] }),
+          puzzle('Exactly five', 2, { variant: 'renju', p1: ['C8', 'E8', 'F8', 'G8', 'H8', 'G10'], p2: ['F9', 'H7', 'K10', 'D6', 'J11'], toMove: 'p1' }, [
+            stage('You are Gold and have four in a row with a stone just beyond one end. Win.', G('win'), 'J8',
+              'One end would make six, which Gold isn\'t allowed to do.', 'Exactly five. The other end was forbidden: it would have made six.'),
+          ]),
+          puzzle('A block Gold can\'t make', 3, { variant: 'renju', p1: ['G8', 'J8', 'H9', 'H10', 'D12', 'K6', 'L5'], p2: ['F10', 'G9', 'J7', 'L9', 'C4'], toMove: 'p2' }, [
+            stage('You are Blue. Make a four whose only blocking point is forbidden for Gold.', G('forcedWin'), 'E11',
+              'Gold can\'t play H8: it would make two open threes at once.', 'Gold is not allowed to block at H8…', 'M4'),
+            stage('Finish it.', G('win'), 'H8',
+              'The point Gold couldn\'t take.', 'Five. Gold\'s own rules stopped the only block.'),
+          ]),
+          play('Renju practice', 'Play Juno (Level 2) at Renju. As Gold, check for forbidden shapes before each move (the game won\'t let you play one). As Blue, look for points Gold can\'t use.',
+            { variantId: 'renju', level: 2, side: 'p1', coachMode: 'quiet' }),
+        ],
+      },
+      {
+        id: '8.12', title: 'Ninuki-Renju', summary: 'The Japanese game Pente grew from: exact fives and no double threes.',
+        steps: [
+          read('What changes', [
+            'Ninuki-Renju is the older Japanese game Pente was simplified from. Captures work as in Pente and five pairs win.',
+            'Three things are stricter: only exactly five wins; a five that can be broken by a capture has to survive one move; and neither player may make two open threes with one stone (unless it makes five or stops the opponent\'s five).',
+            'Trains: finishing cleanly. A Pente habit like building two threes at once is off the table, so you need fours and captures instead.',
+          ], { variant: 'ninuki', p1: ['K10', 'L10', 'M11', 'M12'], p2: [], hints: ['M10'] }),
+          puzzle('Not a double three', 2, { variant: 'ninuki', p1: ['K10', 'L10', 'M11', 'M12', 'F5'], p2: ['J12', 'O14', 'E15', 'Q6'], toMove: 'p1' }, [
+            stage('Make an open three. One natural point isn\'t allowed here.', G('tria'), 'J10',
+              'M10 would make two open threes at once.', 'An open three, and a legal one.'),
+          ]),
+          puzzle('Break the five', 3, { variant: 'ninuki', p1: ['L11', 'J12', 'P11', 'F7'], p2: ['K10', 'L10', 'M10', 'N10', 'O10', 'L9', 'E14'],
+            pendingFive: { player: 'p2', cells: ['K10', 'L10', 'M10', 'N10', 'O10'] }, captured: { p1: 4 }, toMove: 'p1' }, [
+            stage('Blue has made five, but one of its stones sits in a pair you can capture, and you already have four pairs. You get one move. Win.', G('win'), 'L8',
+              'L10 has a blue partner below it, and your stone is above.', 'Your fifth pair, and it broke the five too. In Ninuki-Renju a five has to survive one move.'),
+          ]),
+          play('Ninuki-Renju practice', 'Play Juno (Level 2) at Ninuki-Renju. Aim for fours and captures, not double threes.',
+            { variantId: 'ninuki', level: 2, side: 'p1', coachMode: 'quiet' }),
+        ],
+      },
     ],
   },
   // ===========================================================================

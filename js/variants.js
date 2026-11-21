@@ -15,6 +15,10 @@
 //   choice                    'd-pente' | 'swap2': a set-up, then a choice of sides (see openings.js)
 //   lineToWin                 stones in a row that win (5; Connect6 uses 6)
 //   twoStones                 Connect6 turns: one stone first, then two stones a turn (bot in connect6.js)
+//   boardSize                 15 for Renju (points outside are walls; see rules.js)
+//   renju                     Gold may not make a double three, a double four or an overline; Gold needs exactly five
+//   noDoubleThree             neither side may make two open threes at once (Ninuki-Renju)
+//   opening 'renju' | 'ninuki'  classic first three stones (see illegalReason in rules.js)
 
 const BASE = {
   captureSizes: [2],
@@ -185,11 +189,38 @@ export const VARIANTS = [
     ],
     config: { ...BASE, captureSizes: [], captureWinStones: null, opening: 'center', lineToWin: 6, twoStones: true },
   },
+  {
+    id: 'renju',
+    name: 'Renju',
+    tagline: 'Gomoku on a 15×15 board, with limits on the first player.',
+    trains: 'Precise threat play, and (as Blue) steering Gold into moves it isn\'t allowed to make.',
+    rules: [
+      'Played on a smaller 15×15 board. There are no captures.',
+      'Gold places the first stone on the centre, Blue the second right next to it, and Gold\'s second stone goes within two points of the centre.',
+      'Gold wins only with exactly five in a row. Blue wins with five or more.',
+      'Gold may not make an overline (six or more), a double four, or a double three (two open threes) with one stone, unless the same stone makes five.',
+      'Blue has no such limits. If the only way for Gold to block is a forbidden point, Gold can\'t block there.',
+      'Tournament opening rules (where players offer and swap stones) are not included.',
+    ],
+    config: { ...BASE, captureSizes: [], captureWinStones: null, overlineWins: true, renju: true, boardSize: 15, opening: 'renju' },
+  },
+  {
+    id: 'ninuki',
+    name: 'Ninuki-Renju',
+    tagline: 'The Japanese game Pente grew from.',
+    trains: 'Pente with stricter finishing: exact fives, a five that must survive, and no double threes.',
+    rules: [
+      'Captures work as in Pente: bracket exactly two stones. Five captured pairs win.',
+      'Win with exactly five in a row. Six or more doesn\'t count.',
+      'A five your opponent can break with a capture only wins if it survives their next move.',
+      'Neither player may make two open threes with one stone, unless it makes a five or stops the opponent\'s five.',
+      'Gold starts on the centre, Blue\'s first stone goes right next to it, and Gold\'s second stone goes at least 3 points from the centre.',
+    ],
+    config: { ...BASE, overlineWins: false, boat: true, noDoubleThree: true, opening: 'ninuki' },
+  },
 ];
 
-export const COMING_LATER = [
-  { name: 'Renju', note: 'Gomoku on a 15×15 board, with limits on the first player.' },
-];
+export const COMING_LATER = [];
 
 export function getVariant(id) {
   return VARIANTS.find((v) => v.id === id) || VARIANTS[0];

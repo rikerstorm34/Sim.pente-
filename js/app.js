@@ -1,6 +1,6 @@
 // Game Training Sim.pente — app shell, screens and game flow.
 import {
-  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame, parseCoord, cloneState, moverOf, firstOfTurn,
+  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame, parseCoord, cloneState, moverOf, firstOfTurn, setFrame, frameSize,
 } from './rules.js';
 import { VARIANTS, COMING_LATER, getVariant, resolveVariant } from './variants.js';
 import { LEVELS, LEVEL_IDS } from './ai.js';
@@ -12,7 +12,7 @@ import { THEMES, collection, buildPuzzle, nextVariation, variationsOf, hintRing,
 import { masterStats, openingTree } from './master-stats.js';
 import { createHistory, ACCESS_LIMIT } from './history.js';
 import { PLAYABLE_1983, GAMES_1983, masterEntry, masterId, openingOf, roundOf, OPENING_MOVES, toCoord } from './master-games.js';
-import { swapColours, swapColourWords, setupPosition, checkMove } from './lesson-engine.js';
+import { swapColours, swapColourWords, setupPosition, checkMove, canSwapColours } from './lesson-engine.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
 import { openingStatus, seatColour, CHOICE_LABELS, OPENINGS, describeChances } from './openings.js';
@@ -170,6 +170,7 @@ function parseHash() {
   return { path, params: new URLSearchParams(query) };
 }
 function route() {
+  setFrame(19); // screens with a smaller board (Renju) set their own
   const { path, params } = parseHash();
   const reviewId = path.startsWith('/review/') ? decodeURIComponent(path.slice(8)) : null;
   const lessonId = path.startsWith('/learn/') ? decodeURIComponent(path.slice(7)) : null;
@@ -394,7 +395,7 @@ function startLessonGame(lessonId, stepIdx) {
 
 /** A lesson puzzle as shown: in advanced lessons, placed-stone puzzles may come with colours swapped. */
 function lessonLook(lesson, step) {
-  if (!isAdvanced(lesson) || step.setup.moves || Math.random() < 0.5) return step;
+  if (!isAdvanced(lesson) || step.setup.moves || !canSwapColours(step.setup) || Math.random() < 0.5) return step;
   return {
     ...step, setup: swapColours(step.setup),
     stages: step.stages.map((st) => ({ ...st, prompt: swapColourWords(st.prompt), hint: swapColourWords(st.hint), success: swapColourWords(st.success) })),
@@ -509,9 +510,9 @@ function renderLesson(id, params) {
       ${step.board ? '<div class="board-wrap small" id="board"></div>' : ''}
     </section>`;
     if (step.board) {
+      const s = setupPosition(step.board); // first: it sets the board size for the diagram
       view = new BoardView($('#board'), { onPoint: () => {}, onHover: null });
       view.setLabels(false);
-      const s = setupPosition(step.board);
       view.render(s, { hints: (step.board.hints || []).map(parseCoord) });
     }
     markStep(lesson.id, stepIdx, 3);
@@ -741,7 +742,7 @@ function renderPuzzles(params) {
   if (!items.length) return;
 
   pz = { items, progress, token: 1, current: null };
-  view = new BoardView($('#board'), {
+  pz.handlers = {
     onPoint: (x, y, type) => {
       const P = pz && pz.current;
       if (!P || P.solved || P.busy || P.state.toMove !== P.you) return;
@@ -751,7 +752,8 @@ function renderPuzzles(params) {
       P.preview = [x, y]; pzDraw();
     },
     onHover: null,
-  });
+  };
+  view = new BoardView($('#board'), pz.handlers);
   const ro = new ResizeObserver(() => view && view.setLabels(view.svg.getBoundingClientRect().width >= 460));
   ro.observe($('#board'));
   $('#pz-hint').addEventListener('click', () => { const P = pz.current; if (P && !P.solved) { P.hinted = true; pzDraw(); } });
@@ -776,6 +778,8 @@ function pzLoad(item) {
   store.set(KEYS.puzzles, pz.progress);
   const puzzle = buildPuzzle(item, look);
   const state = setupPosition(puzzle.setup);
+  // A Renju puzzle needs the smaller board (setupPosition has set the coordinate frame).
+  if (view && view.n !== frameSize()) { $('#board').replaceChildren(); view = new BoardView($('#board'), pz.handlers); view.setLabels(view.svg.getBoundingClientRect().width >= 460); }
   pz.token++;
   pz.current = { item, puzzle, state, you: state.toMove, stage: 0, wrong: 0, hinted: false, shown: false, solved: false, recorded: false, preview: null, msg: null, busy: false, lastMove: null, seed: Math.floor(Math.random() * 1e6) };
   pzDraw();
@@ -1389,6 +1393,7 @@ function renderReview(id, params = new URLSearchParams()) {
     return;
   }
   const variant = resolveVariant(entry.variantId, entry.options || {});
+  setFrame(variant.boardSize || 19);
   const bot = LEVELS[entry.level] || LEVELS[1];
   const g = entry.master;
   const viewName = g ? (entry.you === P1 ? g.white : g.black) : 'You';
@@ -1670,10 +1675,10 @@ function renderVariants() {
           <a class="btn" style="margin-top:auto;align-self:flex-start" href="#/setup?v=${esc(v.id)}">Play ${esc(v.name)} ${ICON.arrow}</a>
         </section>`).join('')}
     </div>
-    <section class="card" style="margin-top:14px">
+    ${COMING_LATER.length ? `<section class="card" style="margin-top:14px">
       <h2 style="font-size:20px">Coming later</h2>
       <ul class="rules">${COMING_LATER.map((c) => `<li><b>${esc(c.name)}:</b> ${esc(c.note)}</li>`).join('')}</ul>
-    </section>`;
+    </section>` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1921,6 +1926,7 @@ function leaveGame() {
 function renderGame() {
   game = loadGame();
   if (!game) { location.hash = '#/setup'; return; }
+  setFrame(game.variant.boardSize || 19);
   gameToken++;
   const g = game;
   const optsBits = [];

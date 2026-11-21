@@ -109,7 +109,7 @@ test('no puzzle starts with five in a row on the board unless it is a banked or 
       }
       for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
         const v = s.board[idx(x, y)];
-        if (!v) continue;
+        if (v !== 1 && v !== 2) continue; // empty, or a wall outside a smaller board
         for (const [dx, dy] of AXES) {
           if (inBounds(x - dx, y - dy) && s.board[idx(x - dx, y - dy)] === v) continue;
           const cells = [];

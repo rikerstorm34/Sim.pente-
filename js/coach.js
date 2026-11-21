@@ -2,7 +2,7 @@
 // threats and chances in plain language. Version 1 is rule-based; game review comes later.
 
 import {
-  other, coordName, xOf, yOf, cloneState, applyMove, undoMove,
+  other, coordName, xOf, yOf, cloneState, applyMove, undoMove, illegalReason, idx, SIZE, EMPTY, P1, P2,
   winningPointsFor, captureChancesFor, openFourPointsFor, fivePointsFor,
 } from './rules.js';
 import { c6WinNow, c6Threats, liveWindows, stonesLeft } from './connect6.js';
@@ -49,6 +49,24 @@ export function analyse(s, you, oppName = 'Your opponent') {
       notes.push({ kind: 'threat', tag: 'Five threat', title: `${oppName} can make a five`,
         text: `${oppName} can complete a five at ${list(fives.slice(0, 3).map(pt))}. In this variant one five isn't a win on its own, but it gets them halfway.`,
         points: fives });
+    }
+  }
+
+  // Renju / Ninuki-Renju: points the rules don't allow (Gold in Renju; both sides in Ninuki).
+  if (v.renju || v.noDoubleThree) {
+    const banned = forbiddenPoints(s, you);
+    if (banned.length && (!v.renju || you === P1)) {
+      notes.push({ kind: 'threat', tag: 'Forbidden', title: 'Points you can\'t play',
+        text: `${list(banned.slice(0, 4).map(pt))} would make a forbidden shape (${v.renju ? 'an overline, a double four or a double three' : 'a double three'}). Don't count on them to block.`,
+        points: banned });
+    }
+    if (v.renju && you === P2) {
+      const theirs = forbiddenPoints(s, opp);
+      if (theirs.length) {
+        notes.push({ kind: 'opportunity', tag: 'Forbidden', title: `${oppName} can't play everywhere`,
+          text: `${oppName} isn't allowed to play ${list(theirs.slice(0, 3).map(pt))}. A four that can only be blocked there wins.`,
+          points: theirs, reveal: true });
+      }
     }
   }
 
@@ -146,4 +164,27 @@ function connect6Notes(s, you, oppName) {
     }
   }
   return notes;
+}
+
+// Empty points near the stones where `p` may not play because of a forbidden shape.
+function forbiddenPoints(s, p) {
+  const out = [];
+  const scratch = cloneState(s);
+  scratch.toMove = p;
+  const seen = new Set();
+  for (let i = 0; i < scratch.board.length; i++) {
+    const c = scratch.board[i];
+    if (c !== P1 && c !== P2) continue;
+    const x0 = xOf(i), y0 = yOf(i);
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const x = x0 + dx, y = y0 + dy;
+      if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) continue;
+      const j = idx(x, y);
+      if (seen.has(j) || scratch.board[j] !== EMPTY) continue;
+      seen.add(j);
+      const why = illegalReason(scratch, x, y);
+      if (why && /Forbidden|double three/.test(why)) out.push([x, y]);
+    }
+  }
+  return out;
 }

@@ -78,9 +78,10 @@ test('master statistics add up', () => {
 });
 
 test('lesson puzzles still work with the colours swapped (as advanced lessons show them)', async () => {
-  const { swapColours, swapColourWords } = await import('../js/lesson-engine.js');
+  const { swapColours, swapColourWords, canSwapColours } = await import('../js/lesson-engine.js');
   const { applyMove } = await import('../js/rules.js');
-  const items = collection([], {}).filter((i) => i.source === 'lessons' && !i.step.setup.moves);
+  // Renju treats the colours differently, so its puzzles are never swapped.
+  const items = collection([], {}).filter((i) => i.source === 'lessons' && !i.step.setup.moves && canSwapColours(i.step.setup));
   assert.ok(items.length > 50);
   for (const item of items) {
     const pz = buildPuzzle(item, { sym: 0, swap: true });

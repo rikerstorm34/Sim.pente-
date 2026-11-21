@@ -2,7 +2,7 @@
 // Pure logic (no DOM) so every puzzle can be verified by tests.
 
 import {
-  P1, P2, idx, other, newGame, applyMove, undoMove, cloneState, parseCoord, coordName, isLegal,
+  P1, P2, idx, other, newGame, applyMove, undoMove, cloneState, parseCoord, coordName, isLegal, setFrame,
   winningPointsFor, captureChancesFor, openFourPointsFor, fivePointsFor, nearbyMoves, CENTER, AXES,
 } from './rules.js';
 import { resolveVariant } from './variants.js';
@@ -18,6 +18,7 @@ import { liveWindows, c6Threats } from './connect6.js';
  */
 export function setupPosition(spec) {
   const variant = resolveVariant(spec.variant || 'pente', spec.options || {});
+  setFrame(variant.boardSize || 19); // coordinates in the spec are for this board's size
   const s = newGame(variant);
   if (spec.moves) {
     for (const c of spec.moves) applyMove(s, ...parseCoord(c));
@@ -45,6 +46,9 @@ export function setupPosition(spec) {
   }
   return s;
 }
+
+/** Colours can be swapped only where the rules treat both sides alike (not Renju). */
+export const canSwapColours = (spec) => !resolveVariant(spec.variant || 'pente').renju;
 
 /**
  * The same position with the colours swapped: every gold stone becomes blue and the other way

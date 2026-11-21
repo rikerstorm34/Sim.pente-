@@ -3,7 +3,7 @@
 // how the bot answered them, and how openings turned out.
 
 import {
-  SIZE, CENTER, EMPTY, AXES, DIRS8, P1, P2, idx, inBounds, other, newGame, applyMove, capturesAt,
+  SIZE, CENTER, EMPTY, AXES, DIRS8, P1, P2, idx, inBounds, other, newGame, applyMove, capturesAt, lockedOf,
 } from './rules.js';
 import { resolveVariant, getVariant } from './variants.js';
 
@@ -100,12 +100,12 @@ function makesCaptureThreat(board, x, y, p, sizes) {
 }
 
 // Would (x, y) have been a strong point for `q` (so playing there blocks q)?
-function blocksThreat(board, x, y, q, sizes) {
+function blocksThreat(board, x, y, q, sizes, locked = null) {
   const sh = shapesAt(board, x, y, q);
   if (sh.some((s) => s.shape === 'five')) return 'win';     // stopped a five
   if (sh.some((s) => s.shape === 'openFour')) return 'three'; // stopped an open three becoming an open four
   if (sh.some((s) => s.shape === 'four')) return 'four';
-  if (sizes.length && capturesAt(board, x, y, q, sizes).length) return 'capture';
+  if (sizes.length && capturesAt(board, x, y, q, sizes, locked).length) return 'capture';
   return null;
 }
 
@@ -118,10 +118,11 @@ export function describeMove(before, x, y) {
   const p = s.toMove;
   const opp = other(p);
   const sizes = s.variant.captureSizes;
-  const blocked = blocksThreat(s.board, x, y, opp, sizes);
+  const locked = lockedOf(s);
+  const blocked = blocksThreat(s.board, x, y, opp, sizes, locked);
   const after = { board: s.board.slice() };
   after.board[idx(x, y)] = p;
-  const caps = capturesAt(after.board, x, y, p, sizes);
+  const caps = capturesAt(after.board, x, y, p, sizes, locked);
   for (const c of caps) after.board[c] = EMPTY;
   const shapes = shapesAt(after.board, x, y, p);
   const strongest = shapes.reduce((m, sh) => (!m || SHAPES[sh.shape].rank > SHAPES[m].rank ? sh.shape : m), null);

@@ -227,7 +227,7 @@ export const UNITS = [
             'Every capture brings you closer to five. Near the end, a capture can matter more than any line on the board.',
             'Watch both counts: if your opponent has four captures, every pair you leave open could lose the game.',
           ]),
-          puzzle('Race to five', 2, { p1: ['K8', 'C3'], p2: ['L9', 'M10', 'K12', 'L12', 'M12', 'N12', 'J12'], captured: { p1: 4, p2: 2 } }, [
+          puzzle('Race to five', 2, { p1: ['K8', 'C3'], p2: ['L9', 'M10', 'K12', 'L12', 'M12', 'N12', 'E15'], captured: { p1: 4, p2: 2 } }, [
             stage('Blue has an open four. You have four captures. Win.', G('win'), 'N11',
               'Find the blue pair you can close off.', 'Your fifth capture ends the game before Blue can finish.'),
           ]),

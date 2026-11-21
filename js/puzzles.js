@@ -5,8 +5,10 @@
 //   lessons    every lesson puzzle (shown exactly as in the lesson, since their text names lines)
 //   mine       positions from your own analysed games where you had a forced win and missed it
 //
-// Variations: champion puzzles are shown in one of the 8 board symmetries (rotations and
-// mirror images), chosen per attempt, so the same idea appears as a fresh-looking position.
+// Variations: the same problem shown so it looks different. Champion and own-game puzzles have
+// 16 (the 8 board symmetries, rotations and mirror images, times swapped colours); lesson puzzles
+// set up by placing stones have 2 (colours swapped, with the text changed to match), since their
+// text names rows and columns. Each replay uses a look you haven't had recently.
 //
 // Spaced repetition (simple Leitner boxes, counted in puzzles rather than days):
 //   a miss brings the puzzle back after 4 more puzzles; each solve moves it up a box and
@@ -16,6 +18,7 @@ import { PUZZLE_BANK } from './puzzle-bank.js';
 import { PLAYABLE_1983, masterEntry, roundOf, openingOf } from './master-games.js';
 import { ALL_LESSONS } from './lessons.js';
 import { coordName, parseCoord, CENTER } from './rules.js';
+import { swapColours, swapColourWords } from './lesson-engine.js';
 
 export const THEMES = {
   chain: { name: 'Chains of fours', blurb: 'Every move a four, until one can\'t be stopped.' },
@@ -134,9 +137,43 @@ export function collection(history, analysis) {
 }
 
 // ---------------------------------------------------------------------------
-// Turning an item into a playable puzzle (setup spec + stages), with a variation.
+// Variations
 
-export function buildPuzzle(item, sym = 0) {
+/** The looks a puzzle can take: [{ sym, swap }]. */
+export function variationsOf(item) {
+  if (item.source === 'lessons') return item.step.setup.moves ? [{ sym: 0, swap: false }] : [{ sym: 0, swap: false }, { sym: 0, swap: true }];
+  const out = [];
+  for (const swap of [false, true]) for (let sym = 0; sym < 8; sym++) out.push({ sym, swap });
+  return out;
+}
+
+/** Pick a look for this attempt that hasn't been used recently, and remember it. */
+export function nextVariation(item, progress, rnd = Math.random) {
+  const all = variationsOf(item);
+  const it = (progress.items[item.id] ||= { n: 0, ok: 0, box: 0, due: 0 });
+  let used = Array.isArray(it.looks) ? it.looks : [];
+  let free = all.map((_, i) => i).filter((i) => !used.includes(i));
+  if (!free.length) { used = used.slice(-1); free = all.map((_, i) => i).filter((i) => !used.includes(i)); }
+  if (!free.length) free = [0];
+  const pick = free[Math.floor(rnd() * free.length)];
+  it.looks = used.concat(pick);
+  return all[pick];
+}
+
+const swapStage = (st) => ({ ...st, prompt: swapColourWords(st.prompt), hint: swapColourWords(st.hint), success: swapColourWords(st.success) });
+
+// ---------------------------------------------------------------------------
+// Turning an item into a playable puzzle (setup spec + stages), in one of its looks.
+
+export function buildPuzzle(item, look = { sym: 0, swap: false }) {
+  if (typeof look === 'number') look = { sym: look, swap: false };
+  const { sym, swap } = look;
+  const base = buildBase(item, sym);
+  if (!swap) return { ...base, look };
+  return { ...base, setup: swapColours(base.setup), stages: base.stages.map(swapStage), look };
+}
+
+function buildBase(item, sym) {
   if (item.source === 'lessons') {
     return { setup: item.step.setup, stages: item.step.stages, sym: 0, level: item.level, title: item.title };
   }

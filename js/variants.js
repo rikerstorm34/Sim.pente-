@@ -7,6 +7,7 @@
 //   fivesToWin                fives needed to win
 //   fivesMustDifferInDirection  extra fives only count if they run in a new direction
 //   requireFiveAndCaptures    a win needs a five AND captureWinStones captured stones
+//   lockBankedFives           stones of a banked five can't be captured (Five + Captures)
 //   overlineWins              does six-or-more in a row count as a five?
 //   boat                      a five only wins if it survives the opponent's next move
 //   poof                      moving into a bracket gets your own stones captured
@@ -109,7 +110,7 @@ export const VARIANTS = [
     rules: [
       'Win by making two fives that run in different directions. They may share stones, as in a cross.',
       'A straight line of six or more counts as one five, not two.',
-      'A five counts as soon as you make it, even if stones are captured from it later.',
+      'A five counts as soon as you make it, and from then on its stones can\'t be captured.',
       'Or win by capturing eight pairs (16 stones).',
       'Tournament rule applies.',
     ],
@@ -123,12 +124,12 @@ export const VARIANTS = [
     rules: [
       'To win you need both: a five in a row and the target number of captured pairs.',
       'The target is 5, 8 or 10 pairs, chosen before the game.',
-      'A five counts as soon as you make it, even if stones are captured from it later.',
+      'A five counts as soon as you make it, and from then on its stones can\'t be captured.',
       'Neither a five alone nor captures alone will win.',
       'Tournament rule applies.',
     ],
     optionsSpec: { capturePairs: { label: 'Capture target', choices: [5, 8, 10], default: 5 } },
-    config: { ...BASE, requireFiveAndCaptures: true },
+    config: { ...BASE, requireFiveAndCaptures: true, lockBankedFives: true },
   },
 ];
 

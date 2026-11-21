@@ -142,7 +142,18 @@ export function legalMoves(s) {
  * Stones `player` would capture by placing at (x, y), on the board as it is.
  * Returns a flat list of board indexes. Does not change the board.
  */
-export function capturesAt(board, x, y, player, sizes) {
+// Stones that can't be captured: in Five + Captures, every stone of a banked five is safe.
+export function lockedOf(s) {
+  if (!s.variant || !s.variant.lockBankedFives) return null;
+  const b1 = s.banked[1], b2 = s.banked[2];
+  if (!b1.length && !b2.length) return null;
+  const set = new Set();
+  for (const f of b1) for (const c of f.cells) set.add(c);
+  for (const f of b2) for (const c of f.cells) set.add(c);
+  return set;
+}
+
+export function capturesAt(board, x, y, player, sizes, locked = null) {
   const out = [];
   if (!sizes || sizes.length === 0) return out;
   const opp = other(player);
@@ -152,7 +163,8 @@ export function capturesAt(board, x, y, player, sizes) {
       if (!inBounds(ex, ey) || board[idx(ex, ey)] !== player) continue;
       let ok = true;
       for (let k = 1; k <= n; k++) {
-        if (board[idx(x + dx * k, y + dy * k)] !== opp) { ok = false; break; }
+        const c = idx(x + dx * k, y + dy * k);
+        if (board[c] !== opp || (locked && locked.has(c))) { ok = false; break; }
       }
       if (ok) for (let k = 1; k <= n; k++) out.push(idx(x + dx * k, y + dy * k));
     }
@@ -225,7 +237,7 @@ function canBreakByCapture(s, cells, owner) {
   const set = new Set(cells);
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     if (s.board[idx(x, y)] !== EMPTY) continue;
-    const caps = capturesAt(s.board, x, y, opp, sizes);
+    const caps = capturesAt(s.board, x, y, opp, sizes, lockedOf(s));
     if (caps.some((i) => set.has(i))) return true;
   }
   return false;
@@ -260,7 +272,7 @@ export function applyMove(s, x, y) {
   s.board[here] = player;
 
   // Captures and poofs are both judged on the board right after the stone lands, then removed together.
-  const caps = capturesAt(s.board, x, y, player, v.captureSizes);
+  const caps = capturesAt(s.board, x, y, player, v.captureSizes, lockedOf(s));
   const poofs = v.poof ? poofsAt(s.board, x, y, player, v.captureSizes) : [];
   const capSet = [...new Set(caps)];
   const poofSet = [...new Set(poofs)];
@@ -430,9 +442,10 @@ export function captureChancesFor(s, player) {
   const out = [];
   const sizes = s.variant.captureSizes;
   if (!sizes.length) return out;
+  const locked = lockedOf(s);
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     if (s.board[idx(x, y)] !== EMPTY) continue;
-    const stones = capturesAt(s.board, x, y, player, sizes);
+    const stones = capturesAt(s.board, x, y, player, sizes, locked);
     if (stones.length) out.push({ x, y, stones });
   }
   return out;

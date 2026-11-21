@@ -43,6 +43,35 @@ export function setupPosition(spec) {
   return s;
 }
 
+/**
+ * The same position with the colours swapped: every gold stone becomes blue and the other way
+ * round, the other side is to move, and captures, banked fives and a pending five swap too.
+ * Returns a placement spec (works for move-list specs as well).
+ */
+export function swapColours(spec) {
+  const s = setupPosition(spec);
+  const p1 = [], p2 = [];
+  for (let i = 0; i < s.board.length; i++) {
+    const c = coordName(i % 19, Math.floor(i / 19));
+    if (s.board[i] === P1) p2.push(c); else if (s.board[i] === P2) p1.push(c);
+  }
+  const names = (cells) => cells.map((i) => coordName(i % 19, Math.floor(i / 19)));
+  const out = {
+    variant: spec.variant, options: spec.options, p1, p2,
+    toMove: s.toMove === P1 ? 'p2' : 'p1',
+    captured: { p1: s.captured[P2] / 2, p2: s.captured[P1] / 2 },
+  };
+  if (s.banked[P1].length || s.banked[P2].length) out.banked = { p1: s.banked[P2].map((f) => names(f.cells)), p2: s.banked[P1].map((f) => names(f.cells)) };
+  if (s.pendingFive) out.pendingFive = { player: s.pendingFive.player === P1 ? 'p2' : 'p1', cells: names(s.pendingFive.cells) };
+  return out;
+}
+
+/** Swap the colour names in lesson text ("Gold" <-> "Blue"). */
+export function swapColourWords(text) {
+  if (!text) return text;
+  return text.replace(/\b(Gold|Blue|gold|blue|GOLD|BLUE)\b/g, (w) => ({ Gold: 'Blue', Blue: 'Gold', gold: 'blue', blue: 'gold', GOLD: 'BLUE', BLUE: 'GOLD' })[w]);
+}
+
 function lineOf(coords) {
   const pts = coords.map(parseCoord);
   const dx = Math.sign(pts[1][0] - pts[0][0]), dy = Math.sign(pts[1][1] - pts[0][1]);

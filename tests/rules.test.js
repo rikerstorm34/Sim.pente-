@@ -233,3 +233,21 @@ test('helpers: winning points, capture chances, open fours', () => {
   const fours = openFourPointsFor(t, P1).map(([x, y]) => coordName(x, y)).sort();
   assert.deepEqual(fours, ['J10', 'N10']);
 });
+
+test('Five + Captures: once a five is made, its stones can\'t be captured', () => {
+  const put = (s, list, p) => { for (const c of list) s.board[idx(...parseCoord(c))] = p; };
+  for (const [variantId, expectCapture] of [['five-captures', false], ['pente', true]]) {
+    const s = newGame(resolveVariant(variantId, { capturePairs: 5 }));
+    put(s, ['K10', 'L10', 'M10', 'N10', 'N11'], P1);
+    put(s, ['N12', 'C3', 'D16'], P2);
+    s.ply = 20; s.toMove = P1;
+    applyMove(s, ...parseCoord('O10')); // Gold makes five K10–O10
+    if (variantId === 'pente') { assert.equal(s.winner, P1); continue; }
+    assert.equal(s.banked[P1].length, 1);
+    // Blue brackets the N10–N11 pair from below: N10 is part of the five, so nothing is captured.
+    assert.equal(captureChancesFor(s, P2).some((c) => c.x === 13 && c.y === 10), expectCapture);
+    const rec = applyMove(s, ...parseCoord('N9'));
+    assert.equal(rec.captured.length, 0);
+    assert.equal(s.board[idx(...parseCoord('N10'))], P1);
+  }
+});

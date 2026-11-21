@@ -96,3 +96,26 @@ test('every variant has its own lesson', () => {
   }
   for (const v of VARIANTS) assert.ok(variantsTaught.has(v.id), `no lesson uses ${v.id}`);
 });
+
+test('no puzzle starts with five in a row on the board unless it is a banked or pending five', async () => {
+  const { SIZE, AXES, idx, inBounds, parseCoord } = await import('../js/rules.js');
+  for (const l of ALL_LESSONS) {
+    for (const st of l.steps.filter((x) => x.type === 'puzzle')) {
+      const s = setupPosition(st.setup);
+      const allowed = new Set();
+      for (const five of [...((st.setup.banked && st.setup.banked.p1) || []), ...((st.setup.banked && st.setup.banked.p2) || []), ...(st.setup.pendingFive ? [st.setup.pendingFive.cells] : [])]) {
+        for (const c of five) allowed.add(idx(...parseCoord(c)));
+      }
+      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+        const v = s.board[idx(x, y)];
+        if (!v) continue;
+        for (const [dx, dy] of AXES) {
+          if (inBounds(x - dx, y - dy) && s.board[idx(x - dx, y - dy)] === v) continue;
+          const cells = [];
+          while (inBounds(x + dx * cells.length, y + dy * cells.length) && s.board[idx(x + dx * cells.length, y + dy * cells.length)] === v) cells.push(idx(x + dx * cells.length, y + dy * cells.length));
+          if (cells.length >= 5) assert.ok(cells.every((c) => allowed.has(c)), `${l.id} "${st.title}" starts with a five on the board`);
+        }
+      }
+    }
+  }
+});

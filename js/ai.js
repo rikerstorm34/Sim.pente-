@@ -12,7 +12,7 @@
 
 import {
   SIZE, EMPTY, AXES, DIRS8, idx, inBounds, other,
-  applyMove, undoMove, cloneState, nearbyMoves, capturesAt, winningPointsFor, isLegal,
+  applyMove, undoMove, cloneState, nearbyMoves, capturesAt, lockedOf, winningPointsFor, isLegal,
 } from './rules.js';
 
 export const LEVELS = {
@@ -200,13 +200,14 @@ export function quickScore(s, x, y, me, { ignoreDefence = false } = {}) {
   let score = windowDelta(s.board, x, y, me);
   if (!ignoreDefence) score += windowDelta(s.board, x, y, opp) * 0.9;
   if (sizes.length) {
-    const caps = capturesAt(s.board, x, y, me, sizes).length;
+    const locked = lockedOf(s);
+    const caps = capturesAt(s.board, x, y, me, sizes, locked).length;
     if (caps) {
       score += caps * 220 + caps * s.captured[me] * 25;
       if (v.captureWinStones && s.captured[me] + caps >= v.captureWinStones && !v.requireFiveAndCaptures) score += WIN / 10;
     }
     if (!ignoreDefence) {
-      const theirCaps = capturesAt(s.board, x, y, opp, sizes).length;
+      const theirCaps = capturesAt(s.board, x, y, opp, sizes, locked).length;
       score += theirCaps * 200 + theirCaps * s.captured[opp] * 25;
     }
     score -= selfRisk(s.board, x, y, me, sizes) * 180;
@@ -282,6 +283,7 @@ function captureMoves(s, p) {
   const out = [];
   const b = s.board;
   const opp = other(p);
+  const locked = lockedOf(s);
   for (let i = 0; i < b.length; i++) {
     if (b[i] !== EMPTY) continue;
     const x = i % SIZE, y = (i - x) / SIZE;
@@ -290,7 +292,7 @@ function captureMoves(s, p) {
       const nx = x + dx, ny = y + dy;
       if (inBounds(nx, ny) && b[idx(nx, ny)] === opp) { near = true; break; }
     }
-    if (near && capturesAt(b, x, y, p, sizes).length) out.push(i);
+    if (near && capturesAt(b, x, y, p, sizes, locked).length) out.push(i);
   }
   return out;
 }
@@ -319,7 +321,7 @@ function keystoneCaptures(s, p) {
   let before = -1;
   for (const i of caps) {
     const x = i % SIZE, y = (i - x) / SIZE;
-    if (!capturesAt(b, x, y, p, sizes).some(blocksLine) || !isLegal(s, x, y)) continue;
+    if (!capturesAt(b, x, y, p, sizes, lockedOf(s)).some(blocksLine) || !isLegal(s, x, y)) continue;
     if (before < 0) before = fivePoints(s, p).length;
     applyMove(s, x, y);
     const more = s.winner === p || fivePoints(s, p).length > before;

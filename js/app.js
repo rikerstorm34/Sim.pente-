@@ -8,10 +8,11 @@ import { computeStats } from './stats.js';
 import { buildReview, CLASSES, CLASS_ORDER, FOCUS_TIPS } from './review.js';
 import { computePatterns, REPLY_LABELS } from './patterns.js';
 import { UNITS, ALL_LESSONS, getLesson, nextLesson } from './lessons.js';
-import { THEMES, collection, buildPuzzle, hintRing, emptyProgress, record as recordPuzzle, pickNext, summary as puzzleSummary } from './puzzles.js';
+import { THEMES, collection, buildPuzzle, nextVariation, variationsOf, hintRing, emptyProgress, record as recordPuzzle, pickNext, summary as puzzleSummary } from './puzzles.js';
 import { masterStats, openingTree } from './master-stats.js';
+import { createHistory, ACCESS_LIMIT } from './history.js';
 import { PLAYABLE_1983, GAMES_1983, masterEntry, masterId, openingOf, roundOf, OPENING_MOVES, toCoord } from './master-games.js';
-import { setupPosition, checkMove } from './lesson-engine.js';
+import { swapColours, swapColourWords, setupPosition, checkMove } from './lesson-engine.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
 
@@ -26,7 +27,20 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup', analysis: 'gts.analysis', lessons: 'gts.lessons', puzzles: 'gts.puzzles' };
+const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', setup: 'gts.lastSetup', analysis: 'gts.analysis', lessons: 'gts.lessons', puzzles: 'gts.puzzles' };
+
+// Saved games: the newest 5000 can be opened; older ones live on in the statistics.
+// If storage fills up, the analysis cache is trimmed first.
+const saved = createHistory(localStorage, {
+  onQuota: () => {
+    const cache = store.get(KEYS.analysis, {});
+    const ids = Object.keys(cache).sort((a, b) => (cache[b].at || 0) - (cache[a].at || 0));
+    if (ids.length < 5) return false;
+    for (const old of ids.slice(Math.floor(ids.length / 2))) delete cache[old];
+    store.set(KEYS.analysis, cache);
+    return true;
+  },
+});
 
 const ICON = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
@@ -144,7 +158,8 @@ function route() {
   const lessonId = path.startsWith('/learn/') ? decodeURIComponent(path.slice(7)) : null;
   const fn = reviewId ? () => renderReview(reviewId, params) : lessonId ? () => renderLesson(lessonId, params) : routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
-  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'puzzles', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
+  const inLessonGame = path === '/play' && (store.get(KEYS.game, null) || {}).lesson;
+  const navKey = inLessonGame ? 'learn' : { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'puzzles', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
   document.querySelectorAll('[data-nav]').forEach((a) => {
     if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
@@ -156,21 +171,27 @@ function route() {
   window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', route);
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-lesson-again]');
+  if (!b) return;
+  const [id, step] = b.dataset.lessonAgain.split('|');
+  startLessonGame(id, Number(step));
+});
 
 // ---------------------------------------------------------------------------
 // Home
 
 function renderHome() {
-  const saved = store.get(KEYS.game, null);
-  const history = store.get(KEYS.history, []);
-  const resume = saved ? (() => {
-    const v = getVariant(saved.variantId);
-    const bot = LEVELS[saved.level];
+  const current = store.get(KEYS.game, null);
+  const history = saved.games();
+  const resume = current ? (() => {
+    const v = getVariant(current.variantId);
+    const bot = LEVELS[current.level];
     return `
       <section class="card stack">
         <div class="eyebrow" style="color:var(--aqua)">Game in progress</div>
         <div><h2 style="font-size:23px">${esc(v.name)} vs ${esc(bot.name)}</h2>
-          <p class="muted" style="margin:4px 0 0">${esc(bot.title)} · move ${saved.moves.length + 1}</p></div>
+          <p class="muted" style="margin:4px 0 0">${esc(bot.title)} · move ${current.moves.length + 1}</p></div>
         <a class="btn primary block" href="#/play">Resume game ${ICON.arrow}</a>
       </section>`;
   })() : `
@@ -185,7 +206,7 @@ function renderHome() {
       <section class="card">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
           <h3 style="font-size:18px">Recent games</h3>
-          <a href="#/stats" style="font-size:14px;font-weight:600">${(() => { const t = computeStats(history).total; return t.winPct === null ? 'Stats' : `${t.winPct}% wins · Stats`; })()} →</a>
+          <a href="#/stats" style="font-size:14px;font-weight:600">${(() => { const t = computeStats(saved.forStats()).total; return t.winPct === null ? 'Stats' : `${t.winPct}% wins · Stats`; })()} →</a>
         </div>
         <ul class="history">
           ${history.slice(0, 6).map((h) => `<li><span>${h.id && Array.isArray(h.moves) ? `<a href="#/review/${encodeURIComponent(h.id)}">${esc(h.variantName)}</a>` : esc(h.variantName)} <span class="muted">vs ${esc(h.botName)} (L${h.level})</span></span>
@@ -251,7 +272,7 @@ function statTable(rows) {
 }
 
 function renderStats(params = new URLSearchParams()) {
-  const st = computeStats(store.get(KEYS.history, []));
+  const st = computeStats(saved.forStats());
   const t = st.total;
   const tab = params.get('tab') === 'patterns' ? 'patterns' : 'overview';
   const head = `
@@ -326,6 +347,42 @@ function lessonStepsDone(l) {
   return l.steps.filter((st, i) => st.type !== 'read' && ls.steps[i] && ls.steps[i].done).length;
 }
 const practiceSteps = (l) => l.steps.filter((st) => st.type !== 'read').length;
+
+// Advanced lessons (units 6 onward) give you Gold or Blue at random, in practice games and in
+// puzzles set up by placing stones, so you get good at both sides.
+const isAdvanced = (lesson) => Number(String(lesson.unitId || '').slice(1)) >= 6;
+
+/** Winning a lesson's practice game completes the whole lesson. */
+function completeLessonByGame(id, step) {
+  markStep(id, step, 3);
+  const all = lessonProgress();
+  const ls = all[id] || { steps: {} };
+  ls.done = true;
+  all[id] = ls;
+  store.set(KEYS.lessons, all);
+}
+
+/** Start (or restart) a lesson's practice game. It stays tied to the lesson. */
+function startLessonGame(lessonId, stepIdx) {
+  const lesson = getLesson(lessonId);
+  const step = lesson && lesson.steps[stepIdx];
+  if (!step || step.type !== 'play') { location.hash = `#/learn/${encodeURIComponent(lessonId)}`; return; }
+  const g = step.game;
+  const bot = LEVELS[g.level];
+  const side = isAdvanced(lesson) ? 'random' : g.side || 'p1';
+  startGame({ variantId: g.variantId, level: g.level, side, coach: true, coachMode: g.coachMode || 'quiet',
+    tournamentRule: true, capturePairs: (g.options && g.options.capturePairs) || 5 }, g.moves || [],
+  { lesson: { id: lesson.id, step: stepIdx, goal: step.goal === 'win' ? `beat ${bot.name}` : step.goal } });
+}
+
+/** A lesson puzzle as shown: in advanced lessons, placed-stone puzzles may come with colours swapped. */
+function lessonLook(lesson, step) {
+  if (!isAdvanced(lesson) || step.setup.moves || Math.random() < 0.5) return step;
+  return {
+    ...step, setup: swapColours(step.setup),
+    stages: step.stages.map((st) => ({ ...st, prompt: swapColourWords(st.prompt), hint: swapColourWords(st.hint), success: swapColourWords(st.success) })),
+  };
+}
 const starsHtml = (n) => `<span class="stars" aria-label="${n} of 3 stars">${'★'.repeat(n)}<span class="dim">${'★'.repeat(3 - n)}</span></span>`;
 
 function renderLearn() {
@@ -449,19 +506,14 @@ function renderLesson(id, params) {
       <h2 style="font-size:24px">${esc(step.title)}</h2>
       <p style="margin:0">${esc(step.text)}</p>
       <div class="player" style="max-width:420px"><span class="stone p2" aria-hidden="true"></span>
-        <div class="who"><div class="name">${esc(bot.name)} · Level ${step.game.level}</div><div class="status">${esc(bot.title)} · ${esc(getVariant(step.game.variantId).name)} · you play ${step.game.side === 'p2' ? 'Blue' : 'Gold'}</div></div></div>
-      ${d ? `<p style="margin:0;color:var(--good);font-weight:600">✓ Completed. You can play it again any time.</p>` : '<p class="muted" style="margin:0">Win the game to complete this step. Every game is saved, so you can review it afterwards.</p>'}
+        <div class="who"><div class="name">${esc(bot.name)} · Level ${step.game.level}</div><div class="status">${esc(bot.title)} · ${esc(getVariant(step.game.variantId).name)} · ${isAdvanced(lesson) ? 'you play Gold or Blue, picked at random each game' : `you play ${step.game.side === 'p2' ? 'Blue' : 'Gold'}`}</div></div></div>
+      ${d ? `<p style="margin:0;color:var(--good);font-weight:600">✓ Completed. You can play it again any time.</p>` : '<p class="muted" style="margin:0">Win the game to complete the lesson. Every game is saved, so you can review it afterwards.</p>'}
       <button class="btn primary" type="button" id="start-practice" style="align-self:flex-start">${d ? 'Play again' : 'Start the game'} ${ICON.arrow}</button>
     </section>`;
-    $('#start-practice').addEventListener('click', () => {
-      const g = step.game;
-      startGame({ variantId: g.variantId, level: g.level, side: g.side || 'p1', coach: true, coachMode: g.coachMode || 'quiet',
-        tournamentRule: true, capturePairs: (g.options && g.options.capturePairs) || 5 }, g.moves || [],
-        { lesson: { id: lesson.id, step: stepIdx, goal: step.goal === 'win' ? `beat ${bot.name}` : step.goal } });
-    });
+    $('#start-practice').addEventListener('click', () => startLessonGame(lesson.id, stepIdx));
     return;
   }
-  renderPuzzle(step, body);
+  renderPuzzle(lessonLook(lesson, step), body);
 }
 
 function renderPuzzle(step, body) {
@@ -595,7 +647,7 @@ function leavePuzzles() {
 }
 
 function puzzleItems() {
-  return collection(store.get(KEYS.history, []), store.get(KEYS.analysis, {}));
+  return collection(saved.all(), store.get(KEYS.analysis, {}));
 }
 
 function renderPuzzles(params) {
@@ -698,8 +750,10 @@ function renderPuzzles(params) {
 }
 
 function pzLoad(item) {
-  const sym = item.source === 'champions' || item.source === 'mine' ? Math.floor(Math.random() * 8) : 0;
-  const puzzle = buildPuzzle(item, sym);
+  // Every replay of the same puzzle gets a look that hasn't been used recently.
+  const look = nextVariation(item, pz.progress);
+  store.set(KEYS.puzzles, pz.progress);
+  const puzzle = buildPuzzle(item, look);
   const state = setupPosition(puzzle.setup);
   pz.token++;
   pz.current = { item, puzzle, state, you: state.toMove, stage: 0, wrong: 0, hinted: false, shown: false, solved: false, recorded: false, preview: null, msg: null, busy: false, lastMove: null, seed: Math.floor(Math.random() * 1e6) };
@@ -724,7 +778,7 @@ function pzDraw() {
   const multi = P.puzzle.stages.length > 1;
   let origin = '';
   if (P.solved || P.shown) {
-    if (o.kind === 'master') origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From game ${o.n}, ${esc(o.round)}: ${esc(o.mover)} vs ${esc(o.opp)} (${esc(o.opening)}). <a href="#/review/wc83-${o.n}?side=${o.ply % 2 ? 'B' : 'W'}&at=${o.ply}">Replay the game</a>${P.puzzle.sym ? ' · shown rotated or mirrored' : ''}</p>`;
+    if (o.kind === 'master') origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From game ${o.n}, ${esc(o.round)}: ${esc(o.mover)} vs ${esc(o.opp)} (${esc(o.opening)}). <a href="#/review/wc83-${o.n}?side=${o.ply % 2 ? 'B' : 'W'}&at=${o.ply}">Replay the game</a>${P.puzzle.look.sym || P.puzzle.look.swap ? ` · shown ${[P.puzzle.look.sym ? 'rotated or mirrored' : '', P.puzzle.look.swap ? 'with colours swapped' : ''].filter(Boolean).join(' and ')}` : ''}</p>`;
     else if (o.kind === 'lesson') origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From lesson ${esc(o.lessonId)}, ${esc(o.lessonTitle)}. <a href="#/learn/${encodeURIComponent(o.lessonId)}?s=${o.step}">Open the lesson</a></p>`;
     else origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From your game on ${esc(fmtDate(o.at))}. You played ${esc(o.played)}. <a href="#/review/${encodeURIComponent(o.gameId)}">Review the game</a></p>`;
   }
@@ -738,7 +792,9 @@ function pzDraw() {
     <p style="margin:8px 0 0">${esc(P.solved ? 'Solved!' : sg.prompt)}</p>
     ${P.hinted && !P.solved && sg.hint ? `<p class="muted" style="margin:8px 0 0;font-size:14px">Hint: ${esc(sg.hint)} The answer is one of the four ringed points.</p>` : ''}
     ${P.shown && !P.solved ? `<p class="muted" style="margin:8px 0 0;font-size:14px">The answer is <span class="mono">${esc(sg.answer)}</span>. Play it to see what happens, or go to the next puzzle.</p>` : ''}
-    ${feedback}${origin}`;
+    ${feedback}${origin}
+    ${(P.solved || P.shown) && variationsOf(item).length > 1 ? '<button class="btn" type="button" id="pz-again" style="margin-top:12px">Same puzzle, new look</button>' : ''}`;
+  $('#pz-again')?.addEventListener('click', () => pzLoad(P.item));
   const conf = $('#confirm');
   if (P.preview && !P.solved && !P.busy) {
     conf.innerHTML = `<div style="display:grid;grid-template-columns:1fr 2fr;gap:8px">
@@ -832,7 +888,7 @@ function replyBar(replies) {
 
 function renderPatterns(head, params) {
   const vf = params.get('v') || '';
-  const pt = computePatterns(store.get(KEYS.history, []), { variantId: vf || undefined });
+  const pt = computePatterns(saved.games(), { variantId: vf || undefined });
   const st = pt.style;
   const filter = pt.variants.length > 1 ? `
     <label class="sr-only" for="pvf">Variant</label>
@@ -936,7 +992,10 @@ function archiveTabs(tab) {
 
 function renderArchive(params) {
   if (params.get('tab') === 'masters') { renderMasters(params); return; }
-  const all = store.get(KEYS.history, []).filter(reviewable);
+  const all = saved.games().filter(reviewable);
+  const shown = Math.max(100, Number(params.get('n')) || 100);
+  const varCount = {};
+  for (const e of saved.all()) if (e.parent) varCount[e.parent] = (varCount[e.parent] || 0) + 1;
   const f = params.get('f') || 'all';
   const vf = params.get('v') || '';
   let list = all.filter((h) => f === 'all' || (f === 'wins' ? h.result === 'win' : f === 'losses' ? (h.result === 'loss' || h.result === 'resigned') : h.result === f));
@@ -958,19 +1017,21 @@ function renderArchive(params) {
       ${variantsUsed.length > 1 ? `<label class="sr-only" for="vf">Variant</label>
       <select id="vf" class="select"><option value="">All variants</option>${variantsUsed.map((v) => `<option value="${esc(v)}" ${v === vf ? 'selected' : ''}>${esc(getVariant(v).name)}</option>`).join('')}</select>` : ''}
     </div>
+    <p class="muted" style="margin:0 0 10px;font-size:13px">${list.length} game${list.length === 1 ? '' : 's'}${saved.retiredCount() ? ` · ${saved.retiredCount()} older games are counted in your stats but can no longer be opened (the newest ${ACCESS_LIMIT} are kept)` : ''}</p>
     <div class="game-list">
-      ${list.map((h) => {
+      ${list.slice(0, shown).map((h) => {
         const c = cachedAnalysis(h.id);
         const bot = LEVELS[h.level];
         const res = RESULT_LABEL[h.result] || h.result;
         return `<a class="game-row" href="#/review/${encodeURIComponent(h.id)}">
           <span class="stone ${h.you === P2 ? 'p2' : 'p1'}" aria-hidden="true" style="width:22px;height:22px"></span>
           <span class="gr-main"><b>${esc(h.variantName || getVariant(h.variantId).name)} vs ${esc(bot ? bot.name : h.botName)}</b>
-            <small class="muted">${esc(fmtDate(h.at))} · ${Math.ceil(h.moves.length / 2)} moves${c && c.acc !== null ? ` · accuracy ${c.acc}` : ''}</small></span>
+            <small class="muted">${esc(fmtDate(h.at))} · ${Math.ceil(h.moves.length / 2)} moves${c && c.acc !== null ? ` · accuracy ${c.acc}` : ''}${h.lesson ? ` · lesson ${esc(h.lesson.id)}` : ''}${varCount[h.id] ? ` · ${varCount[h.id]} variation${varCount[h.id] > 1 ? 's' : ''}` : ''}</small></span>
           <span class="pill ${h.result === 'win' ? 'win' : h.result === 'loss' || h.result === 'resigned' ? 'loss' : ''}">${esc(res)}</span>
         </a>`;
       }).join('') || '<p class="muted">No games match these filters.</p>'}
-    </div>` : `
+    </div>
+    ${list.length > shown ? `<a class="btn" style="margin-top:12px" href="${link(f, vf)}&n=${shown + 200}">Show more games</a>` : ''}` : `
     <div class="card stack" style="max-width:640px"><p style="margin:0">No saved games yet. Every game you play from now on is kept here.</p>
       <a class="btn primary" href="#/setup">Play a game ${ICON.arrow}</a></div>`}`;
   $('#vf')?.addEventListener('change', (e) => { location.hash = link(f, e.target.value); });
@@ -1258,6 +1319,37 @@ function explorerHtml(name) {
     </div>`;
 }
 
+// Above a reviewed game: the lesson it belongs to (next lesson / try again), and its variations.
+function reviewExtras(entry, originId) {
+  let html = '';
+  if (entry.lesson && !entry.master) {
+    const lesson = getLesson(entry.lesson.id);
+    if (lesson) {
+      const nextL = nextLesson(lesson.id);
+      const won = entry.result === 'win';
+      const next = nextL ? `<a class="btn ${won ? 'primary' : ''}" href="#/learn/${encodeURIComponent(nextL.id)}">Next lesson: ${esc(nextL.title)} ${ICON.arrow}</a>` : '<a class="btn" href="#/learn">All lessons</a>';
+      const again = `<button class="btn ${won ? '' : 'primary'}" type="button" data-lesson-again="${esc(lesson.id)}|${entry.lesson.step}">${won ? 'Play again' : 'Try again'}</button>`;
+      html += `<section class="card lesson-panel">
+        <div><div class="eyebrow">Lesson ${esc(lesson.id)} · practice game${entry.parent ? ' (variation)' : ''}</div>
+          <p style="margin:4px 0 0">${won ? `You won${entry.parent ? '' : ', so the lesson is complete'}. Look through the key moments, then carry on.` : 'Look through the key moments to see where it turned, then try again.'}</p></div>
+        <div class="row">${won ? next + again : again + next}<a class="btn" href="#/learn/${encodeURIComponent(lesson.id)}?s=${entry.lesson.step}">Back to the lesson</a></div>
+      </section>`;
+    }
+  }
+  if (entry.parent && !entry.master) {
+    html += `<p class="muted" style="margin:0 0 12px;font-size:14px">This is a variation, replayed from move ${Math.floor((entry.fromPly || 0) / 2) + 1}. <a href="#/review/${encodeURIComponent(entry.parent)}">Open the original game</a></p>`;
+  }
+  const vars = saved.variationsOf(originId);
+  if (vars.length) {
+    html += `<details class="card variations" ${entry.parent ? '' : 'open'}><summary><b>Variations of this game</b> <span class="muted">${vars.length} · saved with this game, not counted as separate games</span></summary>
+      <div class="game-list" style="margin-top:8px">${vars.map((v) => `<a class="game-row ${v.id === entry.id ? 'on' : ''}" href="#/review/${encodeURIComponent(v.id)}">
+        <span class="stone ${v.you === P2 ? 'p2' : 'p1'}" aria-hidden="true" style="width:18px;height:18px"></span>
+        <span class="gr-main"><b>From move ${Math.floor((v.fromPly || 0) / 2) + 1}</b><small class="muted">${esc(fmtDate(v.at))} · ${Math.ceil((v.moves.length - (v.fromPly || 0)) / 2)} new moves</small></span>
+        <span class="pill ${v.result === 'win' ? 'win' : v.result === 'loss' || v.result === 'resigned' ? 'loss' : ''}">${esc(RESULT_LABEL[v.result] || v.result)}</span></a>`).join('')}</div></details>`;
+  }
+  return html;
+}
+
 let rv = null; // the review screen's state
 
 function leaveReview() {
@@ -1269,7 +1361,7 @@ function leaveReview() {
 
 function renderReview(id, params = new URLSearchParams()) {
   const isMaster = id.startsWith('wc83-');
-  const entry = isMaster ? masterEntry(Number(id.slice(5)), params.get('side')) : store.get(KEYS.history, []).find((h) => h.id === id);
+  const entry = isMaster ? masterEntry(Number(id.slice(5)), params.get('side')) : saved.find(id);
   if (!reviewable(entry)) {
     app.innerHTML = `<div class="card stack" style="max-width:640px"><p style="margin:0">That game isn't available. Games played before the archive existed only kept their result.</p><a class="btn" href="#/review">Back to your games</a></div>`;
     return;
@@ -1307,7 +1399,7 @@ function renderReview(id, params = new URLSearchParams()) {
       </div>
     </div>`;
 
-  app.innerHTML = head + `
+  app.innerHTML = head + reviewExtras(entry, isMaster ? id : (entry.parent || entry.id)) + `
     <div class="game">
       <div class="stack" style="gap:12px">
         <div class="board-wrap" id="board"></div>
@@ -1386,15 +1478,17 @@ function rvStep(where) {
 function rvRetry(ply) {
   const e = rv.entry;
   const last = store.get(KEYS.setup, {});
+  // A retry is a variation of this game, not a new game: it is saved under the original.
+  const origin = e.parent || e.id;
   if (e.master) {
-    startGame({ variantId: 'pente', level: 4, side: e.you === P2 ? 'p2' : 'p1', coach: true, coachMode: last.coachMode || 'quiet', tournamentRule: true, capturePairs: 5 }, e.moves.slice(0, ply));
+    startGame({ variantId: 'pente', level: 4, side: e.you === P2 ? 'p2' : 'p1', coach: true, coachMode: last.coachMode || 'quiet', tournamentRule: true, capturePairs: 5 }, e.moves.slice(0, ply), { parent: origin });
     return;
   }
   startGame({
     variantId: e.variantId, level: e.level, side: e.you === P2 ? 'p2' : 'p1', coach: true,
     coachMode: last.coachMode || 'quiet', tournamentRule: (e.options || {}).tournamentRule !== false,
     capturePairs: (e.options || {}).capturePairs || 5,
-  }, e.moves.slice(0, ply));
+  }, e.moves.slice(0, ply), { parent: origin, lesson: e.lesson ? { ...e.lesson, goal: 'variation' } : null });
 }
 
 function rvUpdate(full = false) {
@@ -1679,20 +1773,17 @@ let view = null;      // BoardView for the current screen
 let gameToken = 0;    // bumps whenever a game starts or is left, to drop stale bot replies
 
 // Every game is kept with its full move list so it can be replayed and reviewed later.
-const ARCHIVE_LIMIT = 300;
+// A game started from the middle of another (Retry from here) is saved as a variation of it.
 function archiveGame(g, result, reason) {
-  const def = getVariant(g.variantId);
-  const bot = LEVELS[g.level] || LEVELS[1];
-  const history = store.get(KEYS.history, []);
   const id = (g.startedAt || Date.now()).toString(36) + Math.random().toString(36).slice(2, 6);
-  history.unshift({
+  saved.add({
     id,
-    variantId: g.variantId, options: g.options, you: g.you, level: g.level,
-    variantName: def.name, botName: bot.name, result, reason,
+    variantId: g.variantId, options: g.options, you: g.you, level: g.level, result, reason,
     moves: g.moves, plies: g.moves.length, undos: g.undos || 0,
     startedAt: g.startedAt || null, at: Date.now(),
+    lesson: g.lesson ? { id: g.lesson.id, step: g.lesson.step } : null,
+    parent: g.parent || null, fromPly: g.parent ? g.fromPly : null,
   });
-  store.set(KEYS.history, history.slice(0, ARCHIVE_LIMIT));
   return id;
 }
 
@@ -1702,22 +1793,22 @@ function startGame(settings, initialMoves = [], meta = {}) {
   // A game left unfinished is kept in the archive rather than thrown away.
   const previous = store.get(KEYS.game, null);
   if (previous && previous.moves && previous.moves.length) archiveGame(previous, 'unfinished', null);
-  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now(), lesson: meta.lesson || null };
-  store.set(KEYS.game, saved);
+  const fresh = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now(), lesson: meta.lesson || null, parent: meta.parent || null, fromPly: meta.parent ? initialMoves.length : null };
+  store.set(KEYS.game, fresh);
   game = null;
   if (location.hash === '#/play') route(); else location.hash = '#/play';
 }
 
 function loadGame() {
-  const saved = store.get(KEYS.game, null);
-  if (!saved) return null;
+  const cur = store.get(KEYS.game, null);
+  if (!cur) return null;
   try {
-    const variant = resolveVariant(saved.variantId, saved.options);
-    const state = replay(variant, saved.moves);
+    const variant = resolveVariant(cur.variantId, cur.options);
+    const state = replay(variant, cur.moves);
     return {
-      ...saved, state, variant, def: getVariant(saved.variantId), bot: LEVELS[saved.level] || LEVELS[1],
-      preview: null, hover: null, warn: null, hints: [], notes: [], thinking: false, resignArmed: false, undos: saved.undos || 0,
-      coachMode: saved.coachMode || 'quiet', revealed: false,
+      ...cur, state, variant, def: getVariant(cur.variantId), bot: LEVELS[cur.level] || LEVELS[1],
+      preview: null, hover: null, warn: null, hints: [], notes: [], thinking: false, resignArmed: false, undos: cur.undos || 0,
+      coachMode: cur.coachMode || 'quiet', revealed: false,
     };
   } catch {
     store.del(KEYS.game);
@@ -1729,6 +1820,7 @@ function saveGame() {
   if (!game) return;
   store.set(KEYS.game, {
     variantId: game.variantId, options: game.options, you: game.you, level: game.level, coach: game.coach, coachMode: game.coachMode, lesson: game.lesson || null,
+    parent: game.parent || null, fromPly: game.fromPly ?? null,
     moves: game.state.history.map((h) => [h.x, h.y]), startedAt: game.startedAt, undos: game.undos,
   });
 }
@@ -1751,7 +1843,7 @@ function renderGame() {
 
   app.innerHTML = `
     <div class="game-head" style="margin-bottom:12px">
-      <a class="icon-btn" href="#/" aria-label="Back to home">${ICON.back}</a>
+      <a class="icon-btn" href="${g.lesson ? `#/learn/${encodeURIComponent(g.lesson.id)}?s=${g.lesson.step}` : '#/'}" aria-label="${g.lesson ? 'Back to the lesson' : 'Back to home'}">${ICON.back}</a>
       <div class="title">
         <h1>${esc(g.def.name)} vs ${esc(g.bot.name)}</h1>
         <div class="eyebrow">${esc([`Level ${g.level} · ${g.bot.title}`].concat(optsBits).join(' · '))}</div>
@@ -1773,7 +1865,7 @@ function renderGame() {
           <button class="btn" type="button" id="btn-undo">${ICON.undo}<span>Undo</span></button>
           <button class="btn" type="button" id="btn-hint">${ICON.hint}<span>Hint</span></button>
           <button class="btn" type="button" id="btn-resign">${ICON.flag}<span>Resign</span></button>
-          <a class="btn" href="#/setup">${ICON.plus}<span>New</span></a>
+          ${g.lesson ? `<button class="btn" type="button" id="btn-restart">${ICON.plus}<span>Restart</span></button>` : `<a class="btn" href="#/setup">${ICON.plus}<span>New</span></a>`}
         </div>
         <details class="card" style="padding:12px 16px">
           <summary style="cursor:pointer;font-weight:600">Moves</summary>
@@ -1793,6 +1885,10 @@ function renderGame() {
   $('#btn-undo').addEventListener('click', onUndo);
   $('#btn-hint').addEventListener('click', onHint);
   $('#btn-resign').addEventListener('click', onResign);
+  $('#btn-restart')?.addEventListener('click', () => {
+    if (g.state.history.length > (g.parent ? g.fromPly : 0) + 1 && !confirm('Restart this practice game from the beginning?')) return;
+    startLessonGame(g.lesson.id, g.lesson.step);
+  });
 
   if (g.state.winner !== null) { updateGame(); showResult(); return; }
   if (g.state.toMove !== g.you) botTurn(); else { refreshNotes(); updateGame(); }
@@ -2098,9 +2194,10 @@ function finishGame(resigned = false) {
   g.archivedId = archiveGame({
     variantId: g.variantId, options: g.options, you: g.you, level: g.level,
     moves: s.history.map((h) => [h.x, h.y]), startedAt: g.startedAt, undos: g.undos,
+    lesson: g.lesson, parent: g.parent, fromPly: g.fromPly,
   }, result, s.winReason);
   store.del(KEYS.game);
-  if (g.lesson && result === 'win') markStep(g.lesson.id, g.lesson.step, 3);
+  if (g.lesson && result === 'win' && !g.parent) completeLessonByGame(g.lesson.id, g.lesson.step);
   updateGame();
   showResult(result);
 }
@@ -2108,38 +2205,48 @@ function finishGame(resigned = false) {
 function showResult(result) {
   const g = game, s = g.state;
   if (!result) result = s.winner === g.you ? 'win' : s.winner === 0 ? 'draw' : 'loss';
-  const title = result === 'win' ? 'You win!' : result === 'draw' ? 'Draw' : `${g.bot.name} wins`;
+  const won = result === 'win';
+  const title = won ? 'You win!' : result === 'draw' ? 'Draw' : `${g.bot.name} wins`;
   const sub = REASONS[s.winReason] || '';
-  const tip = result === 'win'
-    ? (LEVELS[g.level + 1] ? `Ready for ${LEVELS[g.level + 1].name} (Level ${g.level + 1})?` : 'Try a variant that trains a different skill.')
-    : 'Review the game to see where it turned, or use Undo to try the critical moment again.';
+  const lesson = g.lesson ? getLesson(g.lesson.id) : null;
+  const nextL = lesson ? nextLesson(lesson.id) : null;
+  const tip = g.parent
+    ? 'This was a variation of an earlier game, so it is saved with that game rather than as a new one.'
+    : lesson
+      ? (won ? `Practice complete: lesson ${lesson.id} is done. Review the game, then move on.` : 'Review the game to see where it turned, then try again.')
+      : won
+        ? (LEVELS[g.level + 1] ? `Ready for ${LEVELS[g.level + 1].name} (Level ${g.level + 1})?` : 'Try a variant that trains a different skill.')
+        : 'Review the game to see where it turned.';
+  const review = g.archivedId && s.ply > 0 ? `<a class="btn primary" href="#/review/${encodeURIComponent(g.archivedId)}">Review game</a>` : '';
+  const nextBtn = lesson ? (nextL ? `<a class="btn" href="#/learn/${encodeURIComponent(nextL.id)}">Next lesson: ${esc(nextL.title)} ${ICON.arrow}</a>` : '<a class="btn" href="#/learn">All lessons</a>') : '';
+  const againLabel = lesson ? (won ? 'Play again' : 'Try again') : 'Play again';
+  const again = `<button class="btn" type="button" id="again">${againLabel}</button>`;
+  const home = '<a class="btn" href="#/">Back to home</a>';
+  let buttons;
+  if (g.parent) buttons = [review, g.parent.startsWith('wc83-') ? `<a class="btn" href="#/review/${encodeURIComponent(g.parent)}">Back to the 1983 game</a>` : `<a class="btn" href="#/review/${encodeURIComponent(g.parent)}">Back to the original game</a>`, home];
+  else if (lesson) buttons = won ? [review, nextBtn, again, home] : [review, again, nextBtn, home];
+  else buttons = [review, again, '<a class="btn" href="#/setup">Change settings</a>', home];
   const wrap = document.createElement('div');
   wrap.className = 'result';
   wrap.innerHTML = `
     <div class="card" role="dialog" aria-modal="true" aria-labelledby="result-title">
-      <div class="eyebrow">${esc(g.def.name)} · ${s.ply} moves</div>
+      <div class="eyebrow">${lesson ? `Lesson ${esc(lesson.id)} practice · ` : ''}${esc(g.def.name)} · ${s.ply} moves</div>
       <h2 id="result-title">${esc(title)}</h2>
       <p class="muted" style="margin:0">${esc(sub)}</p>
       <p style="margin:12px 0 0;font-size:14px">${esc(tip)}</p>
-      <div class="row">
-        ${g.lesson ? `<a class="btn primary" href="#/learn/${encodeURIComponent(g.lesson.id)}?s=${g.lesson.step}">${result === 'win' ? 'Practice complete · back to the lesson' : 'Back to the lesson'}</a>` : ''}
-        ${g.archivedId && s.ply > 1 ? `<a class="btn ${g.lesson ? '' : 'primary'}" href="#/review/${encodeURIComponent(g.archivedId)}">Review this game</a>` : ''}
-        <button class="btn ${g.archivedId && s.ply > 1 ? '' : 'primary'}" type="button" id="again">Play again</button>
-        ${result !== 'resigned' ? '<button class="btn" type="button" id="look">Look at the board</button>' : ''}
-        <a class="btn" href="#/setup">Change settings</a>
-      </div>
+      <div class="row result-actions">${buttons.filter(Boolean).join('')}</div>
     </div>`;
   document.body.appendChild(wrap);
   const close = () => wrap.remove();
-  $('#again', wrap).addEventListener('click', () => {
+  $('#again', wrap)?.addEventListener('click', () => {
     close();
+    if (lesson) { startLessonGame(lesson.id, g.lesson.step); return; }
     startGame({ variantId: g.variantId, level: g.level, side: g.you === P1 ? 'p1' : 'p2', coach: g.coach, coachMode: g.coachMode,
       tournamentRule: g.options.tournamentRule, capturePairs: g.options.capturePairs });
   });
-  $('#look', wrap)?.addEventListener('click', close);
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   window.addEventListener('hashchange', close, { once: true });
-  $('#again', wrap).focus();
+  ($('.btn.primary', wrap) || $('#again', wrap))?.focus();
 }
 
 // ---------------------------------------------------------------------------

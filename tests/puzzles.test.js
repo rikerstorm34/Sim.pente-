@@ -23,7 +23,7 @@ test('the puzzle bank is large and every champion puzzle is correct (some checke
   assert.equal(items.length, PUZZLE_BANK.length);
   items.forEach((item, i) => {
     const sym = i % 5 === 0 ? (i / 5) % 8 : 0;
-    const pz = buildPuzzle(item, sym);
+    const pz = buildPuzzle(item, { sym, swap: i % 3 === 0 });
     const s = setupPosition(pz.setup);
     const sg = pz.stages[0];
     assert.equal(s.winner, null, `${item.id}: game still on`);
@@ -75,4 +75,33 @@ test('master statistics add up', () => {
   const w = openingTree('Wedge');
   assert.deepEqual(w.prefix, ['K10', 'L11', 'N10', 'N11', 'M11']);
   assert.ok(w.games >= 20 && w.next[0].move === 'L12');
+});
+
+test('lesson puzzles still work with the colours swapped (as advanced lessons show them)', async () => {
+  const { swapColours, swapColourWords } = await import('../js/lesson-engine.js');
+  const { applyMove } = await import('../js/rules.js');
+  const items = collection([], {}).filter((i) => i.source === 'lessons' && !i.step.setup.moves);
+  assert.ok(items.length > 50);
+  for (const item of items) {
+    const pz = buildPuzzle(item, { sym: 0, swap: true });
+    let s = setupPosition(pz.setup);
+    const orig = setupPosition(item.step.setup);
+    assert.notEqual(s.toMove, orig.toMove, `${item.id}: the other colour is to move`);
+    for (const sg of pz.stages) {
+      const r = checkMove(s, ...parseCoord(sg.answer), sg.goal);
+      assert.ok(r.ok, `${item.id} swapped: ${sg.answer}`);
+      s = r.after;
+      if (sg.reply) { applyMove(s, ...parseCoord(sg.reply)); assert.equal(s.winner, null); }
+    }
+  }
+  assert.equal(swapColourWords("Blue has a four; block Gold's line."), "Gold has a four; block Blue's line.");
+});
+
+test('a replayed puzzle gets a look you have not seen recently', async () => {
+  const { nextVariation } = await import('../js/puzzles.js');
+  const item = collection([], {}).find((i) => i.source === 'champions');
+  const p = emptyProgress();
+  const looks = new Set();
+  for (let k = 0; k < 16; k++) { const v = nextVariation(item, p); looks.add(`${v.sym}/${v.swap}`); }
+  assert.equal(looks.size, 16, 'all 16 looks before any repeats');
 });

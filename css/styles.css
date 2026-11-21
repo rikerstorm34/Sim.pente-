@@ -361,3 +361,12 @@ body.in-game .tabbar { display: none; }
 @media (max-width: 640px) { .ex-wrap { grid-template-columns: 1fr; } .ex-wrap svg { margin: 0 auto; display: block; } }
 .pz-stats .big-num { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 30px; }
 .chip.on .muted { color: inherit; opacity: .8; }
+
+/* Lesson panel on a reviewed practice game; variations list */
+.lesson-panel { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; border-color: var(--accent-text); }
+.lesson-panel .row { display: flex; flex-wrap: wrap; gap: 8px; }
+.variations { margin-bottom: 12px; padding: 12px 16px; }
+.variations summary { cursor: pointer; }
+.game-row.on { outline: 2px solid var(--accent-text); }
+.result-actions { display: grid !important; grid-template-columns: 1fr; gap: 8px; }
+.result-actions .btn { justify-content: center; }

@@ -1,0 +1,50 @@
+# Game Training Sim.pente
+
+A training app for the game of Pente: practice bots at three levels, a live coach that points out threats and chances, and variants that each target a specific skill. It runs in the browser on phone and desktop, with light and dark themes.
+
+**Play:** https://rikerstorm34.github.io/Sim.pente-/
+
+## What's in this version (milestone 1)
+
+- **Play a bot:** Pip (Novice), Juno (Apprentice) and Ludo (Tactician).
+- **Coach:** warns you about open pairs, win threats and open threes, flags capture chances, and checks a move you're previewing before you place it. Hints on request.
+- **Phone-friendly input:** tap to preview a move, then confirm. With a mouse, just click.
+- **Eight variants,** each with plain-language rules and what it trains: Pente, Keryo-Pente, Gomoku, G-Pente, Boat-Pente, Poof-Pente, Double Five and Five + Captures.
+- Undo, resign, move list, game saved automatically, recent results on the home screen.
+
+Coming in later milestones: a stronger engine, game review with move ratings, lessons, puzzles, and the D-Pente / Swap2 openings.
+
+## Running it locally
+
+It's a static site with no build step. Serve the folder with any web server, e.g.
+
+```
+python3 -m http.server 8000
+```
+
+then open http://localhost:8000. (Opening `index.html` directly from disk won't work, because browsers block JavaScript modules on `file://`.)
+
+## Tests
+
+```
+npm test
+```
+
+Uses Node's built-in test runner (Node 18+); there are no dependencies to install.
+
+## Project layout
+
+| Path | What it is |
+|---|---|
+| `index.html` | Page shell: header, tab bar, theme bootstrapping |
+| `css/styles.css` | All styles; light/dark themes are CSS variables |
+| `js/rules.js` | Rules engine: moves, captures, fives, every variant's win rules, undo |
+| `js/variants.js` | Variant configs plus their rules text and "what it trains" |
+| `js/ai.js` | The bot: pattern scoring + alpha-beta search, three levels |
+| `js/ai-worker.js` | Runs the bot in a Web Worker so the page stays responsive |
+| `js/coach.js` | The in-game coach's notes and move-preview warnings |
+| `js/board.js` | SVG board rendering and tap/click handling |
+| `js/app.js` | Screens (home, setup, variants, game), game flow, saving |
+| `tests/` | Rules and bot tests |
+
+Pente® is a trademark of Hasbro, Inc. This is an independent, non-commercial training tool and is not affiliated with or endorsed by Hasbro.

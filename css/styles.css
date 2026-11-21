@@ -205,6 +205,11 @@ body.in-game .tabbar { display: none; }
 .coach { display: flex; flex-direction: column; gap: 10px; }
 .coach-head { display: flex; align-items: center; justify-content: space-between; }
 .coach-head h2 { font-size: 20px; }
+.coach-mode { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.coach-mode .switch { width: 42px; height: 26px; }
+.coach-mode .switch span::after { width: 20px; height: 20px; }
+.coach-mode .switch input:checked + span::after { transform: translateX(16px); }
+.coach-peek { border-style: dashed; color: var(--accent-text); font-weight: 600; }
 
 .confirm-bar { display: flex; flex-direction: column; gap: 8px; }
 .confirm-bar .warn { font-size: 13px; color: var(--warn); font-weight: 500; }

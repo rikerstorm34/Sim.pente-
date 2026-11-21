@@ -239,7 +239,7 @@ function renderSetup(params) {
     variantId: params.get('v') || last.variantId || 'pente',
     level: last.level || 1,
     side: last.side || 'p1',
-    coach: last.coach !== false,
+    coachMode: last.coachMode || (last.coach === false ? 'off' : 'quiet'),
     tournamentRule: last.tournamentRule !== false,
     capturePairs: last.capturePairs || 5,
   };
@@ -303,9 +303,11 @@ function renderSetup(params) {
             <label><input type="radio" name="side" value="random" ${sel.side === 'random' ? 'checked' : ''}><span>Random</span></label>
           </div>
         </div>
-        <div class="switch-row">
-          <div><b>Coach</b><div class="muted" style="font-size:13px">Warns you about threats and open pairs, and hints at chances.</div></div>
-          <label class="switch"><input type="checkbox" name="coach" ${sel.coach ? 'checked' : ''} aria-label="Coach"><span></span></label>
+        <div>
+          <b>Coach</b><div class="muted" style="font-size:13px;margin-bottom:8px">Points out threats, open pairs and chances. <b>Quiet</b> keeps its notes hidden until you tap to see them.</div>
+          <div class="segmented" role="radiogroup" aria-label="Coach">
+            ${[['quiet', 'Quiet'], ['always', 'Always show'], ['off', 'Off']].map(([v, l]) => `<label><input type="radio" name="coachMode" value="${v}" ${sel.coachMode === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}
+          </div>
         </div>
       </section>
 
@@ -331,7 +333,8 @@ function renderSetup(params) {
       variantId: form.variant.value,
       level: Number(form.level.value),
       side: form.side.value,
-      coach: form.coach.checked,
+      coach: form.coachMode.value !== 'off',
+      coachMode: form.coachMode.value,
       tournamentRule: form.tournamentRule.checked,
       capturePairs: Number((form.capturePairs && form.capturePairs.value) || 5),
     };
@@ -369,7 +372,7 @@ function startGame(settings) {
   // A game left unfinished is kept in the archive rather than thrown away.
   const previous = store.get(KEYS.game, null);
   if (previous && previous.moves && previous.moves.length) archiveGame(previous, 'unfinished', null);
-  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, moves: [], startedAt: Date.now() };
+  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: [], startedAt: Date.now() };
   store.set(KEYS.game, saved);
   game = null;
   if (location.hash === '#/play') route(); else location.hash = '#/play';
@@ -384,6 +387,7 @@ function loadGame() {
     return {
       ...saved, state, variant, def: getVariant(saved.variantId), bot: LEVELS[saved.level],
       preview: null, hover: null, warn: null, hints: [], notes: [], thinking: false, resignArmed: false, undos: saved.undos || 0,
+      coachMode: saved.coachMode || 'quiet', revealed: false,
     };
   } catch {
     store.del(KEYS.game);
@@ -394,7 +398,7 @@ function loadGame() {
 function saveGame() {
   if (!game) return;
   store.set(KEYS.game, {
-    variantId: game.variantId, options: game.options, you: game.you, level: game.level, coach: game.coach,
+    variantId: game.variantId, options: game.options, you: game.you, level: game.level, coach: game.coach, coachMode: game.coachMode,
     moves: game.state.history.map((h) => [h.x, h.y]), startedAt: game.startedAt, undos: game.undos,
   });
 }
@@ -495,16 +499,19 @@ function playerCard(p) {
     </div>`;
 }
 
+// In Quiet mode the coach's notes (and its board markers) stay hidden until the player opens them.
+const coachVisible = (g) => g.coach && (g.coachMode === 'always' || g.revealed);
+
 function renderBoard() {
   if (!game || !view) return;
   const g = game, s = g.state;
   const lastRec = s.history[s.history.length - 1];
-  const threatNote = g.coach ? g.notes.find((n) => n.kind === 'threat') : null;
+  const threatNote = coachVisible(g) ? g.notes.find((n) => n.kind === 'threat') : null;
   const ghostAt = g.preview || g.hover;
   view.render(s, {
     last: lastRec ? [lastRec.x, lastRec.y] : null,
     ghost: ghostAt && s.winner === null ? [ghostAt[0], ghostAt[1], g.you] : null,
-    ghostWarn: !!(g.preview && g.warn),
+    ghostWarn: !!(g.preview && g.warn && coachVisible(g)),
     threats: threatNote ? threatNote.points.slice(0, 4) : [],
     hints: g.hints,
   });
@@ -527,21 +534,45 @@ function updateGame() {
       ? '<div class="note"><p>Your move. The first stone goes on the centre point.</p></div>' : '';
   } else {
     const notes = g.notes.slice(0, 3);
+    const quiet = g.coachMode !== 'always';
     let body;
     if (s.winner !== null) body = '';
     else if (g.thinking) body = `<div class="note"><p class="muted">${esc(g.bot.name)} is thinking…</p></div>`;
-    else if (!notes.length) body = `<div class="note"><p class="muted">${s.ply === 0 ? 'Your move. The first stone goes on the centre point.' : 'No immediate threats. Build toward a tria, and keep your pairs covered.'}</p></div>`;
-    else body = notes.map((n, i) => `
+    else if (s.ply === 0 && s.toMove === g.you) body = '<div class="note"><p class="muted">Your move. The first stone goes on the centre point.</p></div>';
+    else if (quiet && !g.revealed) {
+      body = notes.length
+        ? `<button class="btn block coach-peek" type="button" id="coach-open">Coach has ${notes.length} note${notes.length > 1 ? 's' : ''} · Show</button>`
+        : '<div class="note"><p class="muted">Nothing to flag right now.</p></div>';
+    } else if (!notes.length) {
+      body = '<div class="note"><p class="muted">No immediate threats. Build toward a tria, and keep your pairs covered.</p></div>';
+    } else {
+      body = notes.map((n, i) => `
       <div class="note ${n.kind}">
         <div class="eyebrow">${n.kind === 'threat' ? 'Heads up' : 'Chance'} · ${esc(n.tag)}</div>
         <p><b>${esc(n.title)}.</b> ${esc(n.text)}</p>
         ${n.reveal ? `<button class="link" type="button" data-reveal="${i}">Show me</button>` : ''}
-      </div>`).join('');
-    coach.innerHTML = `<div class="coach-head"><h2>Coach</h2><span class="muted" style="font-size:12px">On</span></div>${body}`;
+      </div>`).join('') + (quiet ? '<button class="link" type="button" id="coach-close">Hide notes</button>' : '');
+    }
+    coach.innerHTML = `
+      <div class="coach-head">
+        <h2>Coach</h2>
+        <label class="coach-mode"><span>Always show</span>
+          <span class="switch"><input type="checkbox" id="coach-always" ${quiet ? '' : 'checked'} aria-label="Always show coach notes"><span></span></span>
+        </label>
+      </div>${body}`;
     coach.querySelectorAll('[data-reveal]').forEach((b) => b.addEventListener('click', () => {
       g.hints = g.notes[Number(b.dataset.reveal)].points.slice(0, 4);
       updateGame();
     }));
+    $('#coach-open', coach)?.addEventListener('click', () => { g.revealed = true; updateGame(); });
+    $('#coach-close', coach)?.addEventListener('click', () => { g.revealed = false; g.hints = []; updateGame(); });
+    $('#coach-always', coach).addEventListener('change', (e) => {
+      g.coachMode = e.target.checked ? 'always' : 'quiet';
+      const last = store.get(KEYS.setup, {});
+      store.set(KEYS.setup, { ...last, coachMode: g.coachMode, coach: true });
+      saveGame();
+      updateGame();
+    });
   }
 
   // Confirm bar
@@ -549,7 +580,7 @@ function updateGame() {
   if (g.preview && s.winner === null && !g.thinking) {
     const [x, y] = g.preview;
     conf.innerHTML = `
-      ${g.warn ? `<div class="warn">${esc(g.warn)}</div>` : ''}
+      ${g.warn && coachVisible(g) ? `<div class="warn">${esc(g.warn)}</div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px">
         <button class="btn" type="button" id="btn-cancel">Cancel</button>
         <button class="btn primary" type="button" id="btn-confirm">Place at <span class="mono">${coordName(x, y)}</span></button>
@@ -582,6 +613,7 @@ function updateGame() {
 function refreshNotes() {
   const g = game;
   g.notes = g.coach ? analyse(g.state, g.you, g.bot.name) : [];
+  g.revealed = false; // Quiet mode starts hidden again each turn.
 }
 
 // --- Input
@@ -695,6 +727,7 @@ async function onHint() {
   const move = await askBot(g.state, 3);
   if (token !== gameToken || game !== g) return;
   g.hints = [[move.x, move.y]];
+  g.revealed = true; // asking for a hint opens the coach
   g.notes = [{ kind: 'opportunity', tag: 'Hint', title: `Consider ${coordName(move.x, move.y)}`,
     text: 'This is the move Ludo (Level 3) would play here. Before you take it, try to see why.', points: [[move.x, move.y]] }]
     .concat(g.notes.filter((n) => n.tag !== 'Hint'));
@@ -766,7 +799,7 @@ function showResult(result) {
   const close = () => wrap.remove();
   $('#again', wrap).addEventListener('click', () => {
     close();
-    startGame({ variantId: g.variantId, level: g.level, side: g.you === P1 ? 'p1' : 'p2', coach: g.coach,
+    startGame({ variantId: g.variantId, level: g.level, side: g.you === P1 ? 'p1' : 'p2', coach: g.coach, coachMode: g.coachMode,
       tournamentRule: g.options.tournamentRule, capturePairs: g.options.capturePairs });
   });
   $('#look', wrap)?.addEventListener('click', close);

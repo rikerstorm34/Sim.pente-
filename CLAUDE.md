@@ -41,7 +41,7 @@ Variants exist to train specific skills; each must ship with clear rules and a "
 6. Remaining variant openings (D-Pente, DK, Swap2); multiplayer is deferred
 
 ## Requests from Riker (2026-11-21), not yet built
-- **Quiet coach:** when the coach has something to say, it can stay hidden (e.g. a "Coach has 2 notes" button, with board markers hidden too) but be opened on demand. Make showing/hiding a setting.
+- ✅ **Quiet coach** (built 2026-11-21): modes Quiet (default; notes and board markers hidden behind a "Coach has N notes" button, re-hidden each turn), Always show, Off.
 - **Connect6:** first player places 1 stone, then players alternate placing 2 stones per turn; six or more in a row wins; no captures. Needs multi-stone turns in the rules engine and its own bot search.
 - **Related games:** Renju (15×15, first-player restrictions on double-threes, double-fours and overlines, plus an opening rule) and other five-in-a-row relatives fit the existing engine. **Go** is a different game (territory, ko, scoring) and needs its own rules, engine, coach and lessons: treat it as a separate large project.
 ## Testing in a browser

@@ -1,12 +1,14 @@
 // Game Training Sim.pente — app shell, screens and game flow.
 import {
-  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame,
+  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame, parseCoord, cloneState,
 } from './rules.js';
 import { VARIANTS, COMING_LATER, getVariant, resolveVariant } from './variants.js';
 import { LEVELS, LEVEL_IDS } from './ai.js';
 import { computeStats } from './stats.js';
 import { buildReview, CLASSES, CLASS_ORDER, FOCUS_TIPS } from './review.js';
 import { computePatterns, REPLY_LABELS } from './patterns.js';
+import { UNITS, ALL_LESSONS, getLesson, nextLesson } from './lessons.js';
+import { setupPosition, checkMove } from './lesson-engine.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
 
@@ -21,7 +23,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup', analysis: 'gts.analysis' };
+const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup', analysis: 'gts.analysis', lessons: 'gts.lessons' };
 
 const ICON = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
@@ -126,7 +128,7 @@ async function askBot(state, level) {
 
 const routes = {
   '': renderHome, '/': renderHome, '/setup': renderSetup, '/play': renderGame,
-  '/variants': renderVariants, '/stats': renderStats, '/learn': () => renderSoon('learn'), '/review': renderArchive, '/puzzles': () => renderSoon('puzzles'),
+  '/variants': renderVariants, '/stats': renderStats, '/learn': renderLearn, '/review': renderArchive, '/puzzles': () => renderSoon('puzzles'),
 };
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
@@ -136,14 +138,16 @@ function parseHash() {
 function route() {
   const { path, params } = parseHash();
   const reviewId = path.startsWith('/review/') ? decodeURIComponent(path.slice(8)) : null;
-  const fn = reviewId ? () => renderReview(reviewId) : routes[path] || renderHome;
+  const lessonId = path.startsWith('/learn/') ? decodeURIComponent(path.slice(7)) : null;
+  const fn = reviewId ? () => renderReview(reviewId) : lessonId ? () => renderLesson(lessonId, params) : routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
-  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || (reviewId ? 'review' : 'home');
+  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
   document.querySelectorAll('[data-nav]').forEach((a) => {
     if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   if (path !== '/play') leaveGame();
   leaveReview();
+  leaveLesson();
   fn(params);
   window.scrollTo(0, 0);
 }
@@ -213,7 +217,7 @@ function renderHome() {
           <a class="tile" href="#/setup"><span class="brand-stones" aria-hidden="true" style="width:30px;height:18px"><span class="p1" style="width:18px;height:18px"></span><span class="p2" style="width:18px;height:18px;left:12px"></span></span>
             <span><strong>Play a bot</strong><small>${LEVEL_IDS.length} levels · ${VARIANTS.length} variants</small></span></a>
           <a class="tile" href="#/variants">${ICON.grid}<span><strong>Variants</strong><small>Rules and what each trains</small></span></a>
-          <a class="tile soon" href="#/learn">${ICON.book}<span><strong>Lessons</strong><small><span class="badge">SOON</span></small></span></a>
+          <a class="tile" href="#/learn">${ICON.book}<span><strong>Lessons</strong><small>${lessonsDone()} of ${ALL_LESSONS.length} complete</small></span></a>
           <a class="tile" href="#/review">${ICON.chart}<span><strong>Review</strong><small>Replay and analyse past games</small></span></a>
         </div>
       </div>
@@ -295,6 +299,279 @@ function renderStats(params = new URLSearchParams()) {
       <section class="card"><h2 style="font-size:20px">How you lose</h2>${ends(st.lossesBy)}
         ${st.undos ? `<p class="muted" style="margin:10px 0 0;font-size:13px">Undos used: ${st.undos}</p>` : ''}</section>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Lessons
+
+function lessonProgress() { return store.get(KEYS.lessons, {}); }
+function lessonState(id) { return lessonProgress()[id] || { steps: {} }; }
+function lessonsDone() { return ALL_LESSONS.filter((l) => lessonState(l.id).done).length; }
+function markStep(id, step, stars) {
+  const all = lessonProgress();
+  const ls = all[id] || { steps: {} };
+  const prev = ls.steps[step];
+  ls.steps[step] = { done: true, stars: Math.max(stars || 1, prev ? prev.stars || 1 : 0) };
+  const lesson = getLesson(id);
+  if (lesson) ls.done = lesson.steps.every((st, i) => st.type === 'read' || (ls.steps[i] && ls.steps[i].done));
+  all[id] = ls;
+  store.set(KEYS.lessons, all);
+}
+function lessonStepsDone(l) {
+  const ls = lessonState(l.id);
+  return l.steps.filter((st, i) => st.type !== 'read' && ls.steps[i] && ls.steps[i].done).length;
+}
+const practiceSteps = (l) => l.steps.filter((st) => st.type !== 'read').length;
+const starsHtml = (n) => `<span class="stars" aria-label="${n} of 3 stars">${'★'.repeat(n)}<span class="dim">${'★'.repeat(3 - n)}</span></span>`;
+
+function renderLearn() {
+  const next = ALL_LESSONS.find((l) => !lessonState(l.id).done);
+  app.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div class="eyebrow">Learn</div>
+      <h1 style="font-size:28px;margin-top:4px">Lessons</h1>
+      <p class="muted" style="margin:6px 0 0;max-width:720px">Seven units that build on each other. Each lesson explains one idea, then gives you puzzles that get harder (some take several moves) and a practice game against a bot.</p>
+    </div>
+    ${next ? `<section class="card stack" style="margin-bottom:14px">
+      <div class="eyebrow" style="color:var(--aqua)">${lessonsDone() ? 'Continue' : 'Start here'} · Unit ${next.unitId.slice(1)} · ${esc(next.unitTitle)}</div>
+      <div><h2 style="font-size:23px">${esc(next.id)} · ${esc(next.title)}</h2><p class="muted" style="margin:4px 0 0">${esc(next.summary)}</p></div>
+      <a class="btn primary" href="#/learn/${esc(next.id)}" style="align-self:flex-start">${lessonsDone() ? 'Continue' : 'Start'} ${ICON.arrow}</a>
+    </section>` : '<section class="card" style="margin-bottom:14px"><h2 style="font-size:22px">All lessons complete</h2><p class="muted" style="margin:4px 0 0">Replay any lesson to sharpen up, or test yourself against Vega and Orion.</p></section>'}
+    <div class="units">
+      ${UNITS.map((u, ui) => {
+        const done = u.lessons.filter((l) => lessonState(l.id).done).length;
+        return `<section class="card unit">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">
+            <div><div class="eyebrow">Unit ${ui + 1}</div><h2 style="font-size:22px;margin-top:2px">${esc(u.title)}</h2></div>
+            <span class="mono muted" style="font-size:12px">${done}/${u.lessons.length}</span>
+          </div>
+          <p class="muted" style="margin:4px 0 0;font-size:14px">${esc(u.blurb)}</p>
+          ${bar(Math.round((done / u.lessons.length) * 100))}
+          <div class="lesson-list">${u.lessons.map((l) => {
+            const ls = lessonState(l.id);
+            const n = lessonStepsDone(l), total = practiceSteps(l);
+            return `<a class="lesson-row ${ls.done ? 'done' : ''}" href="#/learn/${esc(l.id)}">
+              <span class="lesson-num mono">${ls.done ? '✓' : esc(l.id)}</span>
+              <span style="flex:1;min-width:0"><b>${esc(l.title)}</b><small class="muted">${esc(l.summary)}</small></span>
+              <span class="mono muted" style="font-size:12px">${n}/${total}</span></a>`;
+          }).join('')}</div>
+        </section>`;
+      }).join('')}
+    </div>`;
+}
+
+let ls = null; // the open lesson's state
+
+function leaveLesson() {
+  if (!ls) return;
+  ls.token++;
+  ls = null;
+}
+
+const GOAL_FAIL = {
+  win: 'That doesn\'t win yet.', block: 'Blue can still win after that.', capture: 'That doesn\'t capture a pair.',
+  blockTria: 'Blue can still make an open four.', tria: 'That doesn\'t make an open three.', openFour: 'That isn\'t an open four.',
+  split3: 'That isn\'t a split three.', four: 'That doesn\'t make a four.', safe: 'That leaves stones Blue can capture.',
+  noCaptures: 'Blue can still capture something.', capThreat: 'That doesn\'t threaten a capture.',
+  forcedWin: 'Blue has a defence against that.', stopForced: 'Blue still has a forced win after that.',
+  points: 'Not that one.', legal: 'That isn\'t allowed.',
+};
+function failReason(state, x, y, goal) {
+  if (goal.all) {
+    for (const g of goal.all) if (!checkMove(state, x, y, g).ok) return GOAL_FAIL[g.kind] || 'Not quite.';
+    return 'Not quite.';
+  }
+  return GOAL_FAIL[goal.kind] || 'Not quite.';
+}
+
+function renderLesson(id, params) {
+  const lesson = getLesson(id);
+  if (!lesson) { location.hash = '#/learn'; return; }
+  const stepIdx = Math.min(lesson.steps.length - 1, Math.max(0, Number(params.get('s')) || 0));
+  ls = { lesson, stepIdx, token: 1 };
+  const step = lesson.steps[stepIdx];
+  const prog = lessonState(lesson.id);
+  const nextL = nextLesson(lesson.id);
+  const goStep = (i) => `#/learn/${encodeURIComponent(lesson.id)}?s=${i}`;
+
+  app.innerHTML = `
+    <div class="game-head" style="margin-bottom:10px">
+      <a class="icon-btn" href="#/learn" aria-label="All lessons">${ICON.back}</a>
+      <div class="title">
+        <div class="eyebrow">Unit ${lesson.unitId.slice(1)} · ${esc(lesson.unitTitle)} · Lesson ${esc(lesson.id)}</div>
+        <h1 style="font-size:22px">${esc(lesson.title)}</h1>
+      </div>
+    </div>
+    <nav class="step-dots" aria-label="Lesson steps">
+      ${lesson.steps.map((st, i) => {
+        const d = prog.steps[i] && prog.steps[i].done;
+        const label = st.type === 'read' ? 'Read' : st.type === 'play' ? 'Game' : `Puzzle`;
+        return `<a href="${goStep(i)}" class="step-dot ${i === stepIdx ? 'on' : ''} ${d ? 'done' : ''}" aria-label="Step ${i + 1}: ${label}${d ? ', done' : ''}" ${i === stepIdx ? 'aria-current="step"' : ''}>
+          <span>${d ? '✓' : st.type === 'read' ? '¶' : st.type === 'play' ? '▶' : i + 1}</span></a>`;
+      }).join('')}
+    </nav>
+    <div class="lesson-body" id="lesson-body"></div>
+    <div class="lesson-foot">
+      ${stepIdx > 0 ? `<a class="btn" href="${goStep(stepIdx - 1)}">${ICON.back} Back</a>` : '<span></span>'}
+      ${stepIdx < lesson.steps.length - 1
+        ? `<a class="btn primary" id="lesson-next" href="${goStep(stepIdx + 1)}">Next ${ICON.arrow}</a>`
+        : nextL ? `<a class="btn primary" id="lesson-next" href="#/learn/${esc(nextL.id)}">Next lesson: ${esc(nextL.title)} ${ICON.arrow}</a>`
+          : '<a class="btn primary" id="lesson-next" href="#/learn">All lessons</a>'}
+    </div>`;
+
+  const body = $('#lesson-body');
+  if (step.type === 'read') {
+    body.innerHTML = `<section class="card lesson-read ${step.board ? 'with-board' : ''}">
+      <div><h2 style="font-size:24px">${esc(step.title)}</h2>${step.text.map((t) => `<p>${esc(t)}</p>`).join('')}</div>
+      ${step.board ? '<div class="board-wrap small" id="board"></div>' : ''}
+    </section>`;
+    if (step.board) {
+      view = new BoardView($('#board'), { onPoint: () => {}, onHover: null });
+      view.setLabels(false);
+      const s = setupPosition(step.board);
+      view.render(s, { hints: (step.board.hints || []).map(parseCoord) });
+    }
+    markStep(lesson.id, stepIdx, 3);
+    return;
+  }
+  if (step.type === 'play') {
+    const d = prog.steps[stepIdx] && prog.steps[stepIdx].done;
+    const bot = LEVELS[step.game.level];
+    body.innerHTML = `<section class="card stack" style="max-width:720px">
+      <div class="eyebrow">Practice game</div>
+      <h2 style="font-size:24px">${esc(step.title)}</h2>
+      <p style="margin:0">${esc(step.text)}</p>
+      <div class="player" style="max-width:420px"><span class="stone p2" aria-hidden="true"></span>
+        <div class="who"><div class="name">${esc(bot.name)} · Level ${step.game.level}</div><div class="status">${esc(bot.title)} · ${esc(getVariant(step.game.variantId).name)} · you play ${step.game.side === 'p2' ? 'Blue' : 'Gold'}</div></div></div>
+      ${d ? `<p style="margin:0;color:var(--good);font-weight:600">✓ Completed. You can play it again any time.</p>` : '<p class="muted" style="margin:0">Win the game to complete this step. Every game is saved, so you can review it afterwards.</p>'}
+      <button class="btn primary" type="button" id="start-practice" style="align-self:flex-start">${d ? 'Play again' : 'Start the game'} ${ICON.arrow}</button>
+    </section>`;
+    $('#start-practice').addEventListener('click', () => {
+      const g = step.game;
+      startGame({ variantId: g.variantId, level: g.level, side: g.side || 'p1', coach: true, coachMode: g.coachMode || 'quiet',
+        tournamentRule: true, capturePairs: (g.options && g.options.capturePairs) || 5 }, g.moves || [],
+        { lesson: { id: lesson.id, step: stepIdx, goal: step.goal === 'win' ? `beat ${bot.name}` : step.goal } });
+    });
+    return;
+  }
+  renderPuzzle(step, body);
+}
+
+function renderPuzzle(step, body) {
+  const r = ls;
+  const lesson = r.lesson;
+  r.puzzle = { stage: 0, state: setupPosition(step.setup), wrong: 0, hinted: false, shown: false, solved: false, preview: null, msg: null, busy: false };
+  const P = r.puzzle;
+  const done = lessonState(lesson.id).steps[r.stepIdx];
+  body.innerHTML = `
+    <div class="game">
+      <div class="stack" style="gap:12px"><div class="board-wrap" id="board"></div></div>
+      <div class="side">
+        <section class="card" id="pz-card" aria-live="polite"></section>
+        <div id="confirm" class="confirm-bar"></div>
+        <div class="actions" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+          <button class="btn" type="button" id="pz-hint">${ICON.hint}<span>Hint</span></button>
+          <button class="btn" type="button" id="pz-show">Show answer</button>
+          <button class="btn" type="button" id="pz-reset">${ICON.undo}<span>Reset</span></button>
+        </div>
+        ${done ? `<p class="muted" style="margin:0;font-size:13px">Solved before ${starsHtml(done.stars || 1)}</p>` : ''}
+      </div>
+    </div>`;
+  view = new BoardView($('#board'), {
+    onPoint: (x, y, type) => {
+      if (P.solved || P.busy || P.state.toMove !== r.you) return;
+      const why = illegalReason(P.state, x, y);
+      if (why) { toast(why); return; }
+      if (type === 'mouse' || (P.preview && P.preview[0] === x && P.preview[1] === y)) { attempt(x, y); return; }
+      P.preview = [x, y]; draw();
+    },
+    onHover: null,
+  });
+  r.you = P.state.toMove;
+  const youName = r.you === P1 ? 'Gold' : 'Blue';
+
+  function draw(extra = {}) {
+    const sg = step.stages[P.stage];
+    const last = P.lastMove || null;
+    view.render(P.state, {
+      last,
+      ghost: P.preview ? [P.preview[0], P.preview[1], r.you] : null,
+      hints: P.shown && !P.solved ? [parseCoord(sg.answer)] : [],
+      ...extra,
+    });
+    const multi = step.stages.length > 1;
+    let feedback = '';
+    if (P.msg) feedback = `<div class="note ${P.msg.kind}" style="margin-top:12px"><p>${esc(P.msg.text)}</p></div>`;
+    $('#pz-card').innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+        <div class="eyebrow">Puzzle · Level ${step.level}${multi ? ` · Step ${Math.min(P.stage + 1, step.stages.length)} of ${step.stages.length}` : ''}</div>
+        <span class="badge">YOU: ${youName.toUpperCase()}</span>
+      </div>
+      <h2 style="font-size:22px;margin-top:6px">${esc(step.title)}</h2>
+      <p style="margin:8px 0 0">${esc(P.solved ? 'Solved!' : sg.prompt)}</p>
+      ${P.hinted && !P.solved ? `<p class="muted" style="margin:8px 0 0;font-size:14px">Hint: ${esc(sg.hint)}</p>` : ''}
+      ${feedback}
+      ${P.solved ? `<div style="margin-top:12px">${starsHtml(P.stars)}</div>` : ''}`;
+    const conf = $('#confirm');
+    if (P.preview && !P.solved && !P.busy) {
+      conf.innerHTML = `<div style="display:grid;grid-template-columns:1fr 2fr;gap:8px">
+        <button class="btn" type="button" id="pz-cancel">Cancel</button>
+        <button class="btn primary" type="button" id="pz-confirm">Play <span class="mono">${coordName(...P.preview)}</span></button></div>`;
+      $('#pz-confirm').addEventListener('click', () => attempt(...P.preview));
+      $('#pz-cancel').addEventListener('click', () => { P.preview = null; draw(); });
+    } else conf.innerHTML = P.busy ? '<div class="muted" style="font-size:13px;text-align:center">Checking…</div>' : '';
+    $('#pz-hint').disabled = P.solved;
+    $('#pz-show').disabled = P.solved || P.wrong < 2;
+    $('#pz-show').title = P.wrong < 2 ? 'Available after two tries' : '';
+  }
+
+  function attempt(x, y) {
+    const sg = step.stages[P.stage];
+    P.preview = null; P.busy = true; draw();
+    const token = r.token;
+    setTimeout(() => {
+      if (ls !== r || r.token !== token) return;
+      const res = checkMove(P.state, x, y, sg.goal);
+      P.busy = false;
+      if (!res.ok) {
+        P.wrong++;
+        P.msg = { kind: 'threat', text: `${coordName(x, y)}: ${failReason(P.state, x, y, sg.goal)}${P.wrong >= 2 && !P.shown ? ' You can ask to see the answer now.' : ''}` };
+        draw();
+        return;
+      }
+      if (res.record) {
+        if (res.record.captured.length) view.flashRemoved(res.record.captured, r.you === P1 ? '#3C5FD6' : '#E8B54A');
+      }
+      P.state = res.after;
+      P.lastMove = [x, y];
+      P.msg = { kind: 'opportunity', text: sg.success };
+      if (sg.reply && P.stage < step.stages.length - 1) {
+        P.busy = true; draw();
+        setTimeout(() => {
+          if (ls !== r || r.token !== token) return;
+          const [rx, ry] = parseCoord(sg.reply);
+          const rec = applyMove(P.state, rx, ry);
+          if (rec.captured.length) view.flashRemoved(rec.captured, r.you === P1 ? '#E8B54A' : '#3C5FD6');
+          P.lastMove = [rx, ry];
+          P.stage++;
+          P.busy = false;
+          P.msg = { kind: 'opportunity', text: `${sg.success} ${r.you === P1 ? 'Blue' : 'Gold'} played ${sg.reply}.` };
+          draw();
+        }, 800);
+        return;
+      }
+      P.solved = true;
+      P.stars = P.shown ? 1 : P.hinted || P.wrong ? 2 : 3;
+      markStep(lesson.id, r.stepIdx, P.stars);
+      draw();
+      $('#lesson-next')?.focus();
+    }, 30);
+  }
+
+  $('#pz-hint').addEventListener('click', () => { P.hinted = true; draw(); });
+  $('#pz-show').addEventListener('click', () => { P.shown = true; draw(); });
+  $('#pz-reset').addEventListener('click', () => { if (ls === r) { r.token++; renderLesson(lesson.id, new URLSearchParams(`s=${r.stepIdx}`)); } });
+  draw();
 }
 
 // ---------------------------------------------------------------------------
@@ -880,13 +1157,13 @@ function archiveGame(g, result, reason) {
   return id;
 }
 
-function startGame(settings, initialMoves = []) {
+function startGame(settings, initialMoves = [], meta = {}) {
   const you = settings.side === 'random' ? (Math.random() < 0.5 ? P1 : P2) : settings.side === 'p2' ? P2 : P1;
   const options = { tournamentRule: settings.tournamentRule, capturePairs: settings.capturePairs };
   // A game left unfinished is kept in the archive rather than thrown away.
   const previous = store.get(KEYS.game, null);
   if (previous && previous.moves && previous.moves.length) archiveGame(previous, 'unfinished', null);
-  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now() };
+  const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now(), lesson: meta.lesson || null };
   store.set(KEYS.game, saved);
   game = null;
   if (location.hash === '#/play') route(); else location.hash = '#/play';
@@ -912,7 +1189,7 @@ function loadGame() {
 function saveGame() {
   if (!game) return;
   store.set(KEYS.game, {
-    variantId: game.variantId, options: game.options, you: game.you, level: game.level, coach: game.coach, coachMode: game.coachMode,
+    variantId: game.variantId, options: game.options, you: game.you, level: game.level, coach: game.coach, coachMode: game.coachMode, lesson: game.lesson || null,
     moves: game.state.history.map((h) => [h.x, h.y]), startedAt: game.startedAt, undos: game.undos,
   });
 }
@@ -942,6 +1219,7 @@ function renderGame() {
       </div>
       <a class="icon-btn" href="#/variants" aria-label="Rules for this variant">${ICON.book}</a>
     </div>
+    ${g.lesson ? `<a class="lesson-banner" href="#/learn/${encodeURIComponent(g.lesson.id)}?s=${g.lesson.step}">${ICON.book}<span><b>Lesson ${esc(g.lesson.id)} practice:</b> ${esc(g.lesson.goal || 'win the game')}</span></a>` : ''}
     <div class="game">
       <div class="stack" style="gap:12px">
         <div id="opp-phone" class="only-phone"></div>
@@ -1283,6 +1561,7 @@ function finishGame(resigned = false) {
     moves: s.history.map((h) => [h.x, h.y]), startedAt: g.startedAt, undos: g.undos,
   }, result, s.winReason);
   store.del(KEYS.game);
+  if (g.lesson && result === 'win') markStep(g.lesson.id, g.lesson.step, 3);
   updateGame();
   showResult(result);
 }
@@ -1304,7 +1583,8 @@ function showResult(result) {
       <p class="muted" style="margin:0">${esc(sub)}</p>
       <p style="margin:12px 0 0;font-size:14px">${esc(tip)}</p>
       <div class="row">
-        ${g.archivedId && s.ply > 1 ? `<a class="btn primary" href="#/review/${encodeURIComponent(g.archivedId)}">Review this game</a>` : ''}
+        ${g.lesson ? `<a class="btn primary" href="#/learn/${encodeURIComponent(g.lesson.id)}?s=${g.lesson.step}">${result === 'win' ? 'Practice complete · back to the lesson' : 'Back to the lesson'}</a>` : ''}
+        ${g.archivedId && s.ply > 1 ? `<a class="btn ${g.lesson ? '' : 'primary'}" href="#/review/${encodeURIComponent(g.archivedId)}">Review this game</a>` : ''}
         <button class="btn ${g.archivedId && s.ply > 1 ? '' : 'primary'}" type="button" id="again">Play again</button>
         ${result !== 'resigned' ? '<button class="btn" type="button" id="look">Look at the board</button>' : ''}
         <a class="btn" href="#/setup">Change settings</a>

@@ -287,3 +287,25 @@ body.in-game .tabbar { display: none; }
 .opening-svg { flex-shrink: 0; border-radius: 8px; box-shadow: 0 0 0 1.5px #2F44B0; }
 .replies { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .reply { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+
+/* ---------- Lessons ---------- */
+.units { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.unit .lesson-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.lesson-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); text-decoration: none; }
+.lesson-row:hover { border-color: var(--accent); }
+.lesson-row small { display: block; font-size: 12px; margin-top: 1px; }
+.lesson-num { width: 34px; height: 34px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; background: var(--surface); border: 1px solid var(--border); flex-shrink: 0; }
+.lesson-row.done .lesson-num { background: var(--good-bg); border-color: var(--good-bd); color: var(--good); font-weight: 700; }
+.step-dots { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.step-dot { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; font-size: 13px; font-weight: 600; }
+.step-dot.done { background: var(--good-bg); border-color: var(--good-bd); color: var(--good); }
+.step-dot.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); color: var(--text); }
+.lesson-read { display: grid; gap: 18px; }
+.lesson-read p { margin: 10px 0 0; line-height: 1.6; max-width: 640px; }
+@media (min-width: 960px) { .lesson-read.with-board { grid-template-columns: minmax(0, 1fr) 420px; align-items: start; } }
+.board-wrap.small { max-width: 420px; }
+.lesson-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.stars { color: #E0A92B; letter-spacing: 2px; font-size: 18px; }
+.stars .dim { color: var(--track); }
+.lesson-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 12px; background: var(--good-bg); border: 1px solid var(--good-bd); color: var(--text); text-decoration: none; font-size: 14px; }
+.lesson-banner svg { width: 18px; height: 18px; color: var(--good); flex-shrink: 0; }

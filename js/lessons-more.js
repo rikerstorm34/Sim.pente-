@@ -221,10 +221,31 @@ export const MORE_UNITS = [
             stage('Capture the keystone so that it also makes a second four. Then Blue is lost.', ALL(G('capture'), G('forcedWin')), 'O9',
               'The capture point is also the top of your O column.', 'One capture, two threats at O10. Blue can\'t cover everything.'),
           ]),
+          puzzle('Keystones and a three', 5,
+            { p1: ['J13', 'J12', 'J11', 'J10', 'L10', 'M10', 'N10', 'M8', 'F15'], p2: ['J14', 'K10', 'O10', 'J9', 'K8', 'J7', 'L7', 'D4'] }, [
+              stage('Blue has an open three on the diagonal. Ignore it. Two of Blue\'s stones each block one of your fours, and they form a pair. Find the move that wins.', G('forcedWin'), 'L11',
+                'Threaten to capture both blockers, and build a three at the same time.', 'If Blue saves the pair, your diagonal becomes an open four. If not, one capture reopens two fours at once.'),
+            ]),
         ],
       },
       {
-        id: '9.2', title: 'A bigger threat', summary: 'You don\'t always have to block. Answer with something stronger.',
+        id: '9.2', title: 'Which end to block', summary: 'When a block will be captured either way, pick the end that costs less.',
+        steps: [
+          read('Block into the capture', [
+            'Normally you block an open three on the end where your stone is safe. But sometimes one end will cost you a pair whichever end you choose.',
+            'Here is how that happens. Block on the safe end, and your opponent stretches the three into a four at the other end. Now you must block there anyway, into the capture, and they take the pair with a stone that also lines up with their new four.',
+            'So unless the safe end gives you something (a capture, a capture threat or a three of your own), block straight into the capture. You lose the same pair, but they get one move instead of two.',
+          ]),
+          puzzle('Block into the capture', 4, { p1: ['K9', 'J8', 'H7', 'K7', 'F15', 'Q16'], p2: ['K10', 'L10', 'M10', 'L8', 'D4', 'R15'] }, [
+            stage('Blue has an open three. Blocking at J10 lets Blue capture J10 and K9. Blocking at N10 looks safe. Which is better?', ALL(G('blockTria'), G('points', { points: ['J10'] })), 'J10',
+              'If you block at N10, Blue plays H10: a four you must block at J10, and then Blue captures anyway.', 'Right. Blue takes the pair now…', 'H11'),
+            stage('Blue captured, so the three is open again. Block it.', G('blockTria'), 'N10',
+              'Either end works now. Check that your block is safe.', 'You gave up one pair, but Blue spent a move to take it and has nothing extra.'),
+          ]),
+        ],
+      },
+      {
+        id: '9.3', title: 'A bigger threat', summary: 'You don\'t always have to block. Answer with something stronger.',
         steps: [
           read('Strong players don\'t just block', [
             'When your opponent makes an open three, blocking an end is only one answer. Strong players list the others: make a four (it must be answered first), capture a stone out of the three, threaten a pair that sits in the three, or race to your fifth capture.',
@@ -245,7 +266,7 @@ export const MORE_UNITS = [
         ],
       },
       {
-        id: '9.3', title: 'Double attacks on pairs', summary: 'One stone, two pairs threatened: one of them falls.',
+        id: '9.4', title: 'Double attacks on pairs', summary: 'One stone, two pairs threatened: one of them falls.',
         steps: [
           read('Two pairs at once', [
             'A stone that sits on the end of two enemy pairs threatens both. Your opponent can only save one, usually by stretching it into three.',
@@ -261,7 +282,7 @@ export const MORE_UNITS = [
         ],
       },
       {
-        id: '9.4', title: 'The quiet move', summary: 'A move with no threat that makes the next attack unstoppable.',
+        id: '9.5', title: 'The quiet move', summary: 'A move with no threat that makes the next attack unstoppable.',
         steps: [
           read('The pause', [
             'Not every winning move is a threat. Sometimes the strongest move is quiet: it threatens nothing yet, but it sets up two different attacks, and your opponent can only stop one.',

@@ -334,6 +334,26 @@ export const UNITS = [
             { variantId: 'pente', level: 2, side: 'p2', coachMode: 'quiet' }),
         ],
       },
+      {
+        id: '5.3', title: 'Opening shapes', summary: 'The hat: how strong players place their third stone.',
+        steps: [
+          read('Shapes, not pairs', [
+            'Strong players almost never put their third stone next to one of their others. A pair is something Blue can attack, and attacking it gains Blue a tempo. Usually Gold only pairs up after Blue has made a pair first, and then the game turns into an exchange of captures.',
+            'The favourite third-stone shape is the hat: two stones three points apart on a line, plus a third stone two points off that line and one point in from an end. No two stones touch, yet each pair of them shares a line with room to grow.',
+            'Two more rules of thumb from strong players: lines across and up-and-down usually give more good follow-ups than diagonals, and stones near the centre favour Gold because they can grow in every direction.',
+          ], { p1: ['K10', 'N10', 'M12'], p2: ['L11'], hints: ['L12', 'M8', 'L8'] }),
+          puzzle('Build a hat', 2, { moves: ['K10', 'L11', 'N10', 'K12'] }, [
+            stage('Your stones at K10 and N10 are three apart. Add a third stone to make a hat.', ALL(G('safe'), G('points', { points: ['M12', 'L12', 'M8', 'L8'] })), 'M12',
+              'Two points above or below the row, one point in from either end.', 'A hat. Three stones, no pair, and three lines that can grow.'),
+          ]),
+          puzzle('A hat on a column', 2, { moves: ['K10', 'J9', 'K13', 'L12'] }, [
+            stage('This time your stones are three apart on the K column. Make a hat.', ALL(G('safe'), G('points', { points: ['M12', 'M11', 'H12', 'H11'] })), 'M12',
+              'Two columns to the side, one point in from the top or bottom stone.', 'Same shape, turned on its side.'),
+          ]),
+          play('Shapes in the opening', 'Play Gold against Ludo (Level 3). Make a hat or another pair-free shape with your third stone.',
+            { variantId: 'pente', level: 3, side: 'p1', coachMode: 'quiet' }),
+        ],
+      },
     ],
   },
   // ===========================================================================

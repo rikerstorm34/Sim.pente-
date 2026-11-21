@@ -125,3 +125,16 @@ test('a bot that runs out of time mid-search still returns a legal move and leav
     }
   }
 });
+
+test('the threat search finds captures that reopen blocked fours (keystones)', () => {
+  // Gold's column J10–J13 is blocked by Blue's J9, and the row L10–N10 by Blue's K10.
+  // Those two blockers are a pair, so H8 captures both and leaves two five-points.
+  const s = newGame(resolveVariant('pente'));
+  const put = (list, p) => { for (const c of list) s.board[idx(...parseCoord(c))] = p; };
+  put(['J13', 'J12', 'J11', 'J10', 'L10', 'M10', 'N10', 'M8', 'L11'], P1);
+  put(['J14', 'K10', 'O10', 'J9', 'K8', 'J7', 'L7', 'K12'], P2);
+  s.ply = 20; s.toMove = P1;
+  const m = findVCF(s, P1, 6, Date.now() + 3000, 50000);
+  assert.ok(m, 'expected a forced win');
+  assert.equal(coordName(m.x, m.y), 'H8');
+});

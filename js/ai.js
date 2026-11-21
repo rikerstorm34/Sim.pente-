@@ -295,8 +295,43 @@ function captureMoves(s, p) {
   return out;
 }
 
+// Captures that threaten five by taking away a blocking stone (a "keystone"), so the move
+// makes no new line itself but reopens one. These are fours too, and the threat search needs them.
+function keystoneCaptures(s, p) {
+  const out = [];
+  const caps = captureMoves(s, p);
+  if (!caps.length) return out;
+  const b = s.board;
+  const sizes = s.variant.captureSizes;
+  // Only a captured stone with three of p's stones near it on one line can be holding back a four.
+  const blocksLine = (c) => {
+    const cx = c % SIZE, cy = (c - cx) / SIZE;
+    for (const [dx, dy] of AXES) {
+      let mine = 0;
+      for (let k = -4; k <= 4; k++) {
+        const nx = cx + dx * k, ny = cy + dy * k;
+        if (k && inBounds(nx, ny) && b[idx(nx, ny)] === p) mine++;
+      }
+      if (mine >= 3) return true;
+    }
+    return false;
+  };
+  let before = -1;
+  for (const i of caps) {
+    const x = i % SIZE, y = (i - x) / SIZE;
+    if (!capturesAt(b, x, y, p, sizes).some(blocksLine) || !isLegal(s, x, y)) continue;
+    if (before < 0) before = fivePoints(s, p).length;
+    applyMove(s, x, y);
+    const more = s.winner === p || fivePoints(s, p).length > before;
+    undoMove(s);
+    if (more) out.push(i);
+  }
+  return out;
+}
+
 /**
- * Look for a forced win for `attacker` (who must be on move) using only five-threats.
+ * Look for a forced win for `attacker` (who must be on move) using only five-threats
+ * (including captures that reopen a blocked four).
  * Returns the first move of the winning chain, or null.
  */
 export function findVCF(state, attacker, maxDepth = 10, deadline = now() + 500, nodeLimit = 30000) {
@@ -307,7 +342,9 @@ export function findVCF(state, attacker, maxDepth = 10, deadline = now() + 500, 
 
   function attack(depth) {
     if (depth <= 0) return null;
-    for (const i of fourMakingMoves(s, attacker)) {
+    const moves = fourMakingMoves(s, attacker);
+    for (const k of keystoneCaptures(s, attacker)) if (!moves.includes(k)) moves.push(k);
+    for (const i of moves) {
       if (++nodes > nodeLimit || ((nodes & 63) === 0 && now() > deadline)) throw new Timeout();
       const x = i % SIZE, y = (i - x) / SIZE;
       if (!isLegal(s, x, y)) continue;

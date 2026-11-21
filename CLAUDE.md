@@ -32,11 +32,17 @@ Variants exist to train specific skills; each must ship with clear rules and a "
 
 ## Roadmap
 1. ✅ Rules engine, playable board, basic bot, coach (milestone 1)
+   - ✅ Every game (finished or abandoned) is archived with its full move list in `gts.history` (up to 300).
 2. Stronger capture-aware engine (threat-space search), calibrated levels
 3. Game review: winning-chances graph, move labels with reasons, key moments with retry (the evidence-backed core)
+   - Riker's request: a **game archive** to browse, replay and analyse ANY past game (data already saved since 2026-11-21).
 4. Lessons (rules → shapes → captures → initiative → openings → threat sequences → endgame)
 5. Puzzles from the player's own mistakes, spaced repetition
-6. Remaining variant openings; multiplayer is deferred
+6. Remaining variant openings (D-Pente, DK, Swap2); multiplayer is deferred
 
+## Requests from Riker (2026-11-21), not yet built
+- **Quiet coach:** when the coach has something to say, it can stay hidden (e.g. a "Coach has 2 notes" button, with board markers hidden too) but be opened on demand. Make showing/hiding a setting.
+- **Connect6:** first player places 1 stone, then players alternate placing 2 stones per turn; six or more in a row wins; no captures. Needs multi-stone turns in the rules engine and its own bot search.
+- **Related games:** Renju (15×15, first-player restrictions on double-threes, double-fours and overlines, plus an opening rule) and other five-in-a-row relatives fit the existing engine. **Go** is a different game (territory, ko, scoring) and needs its own rules, engine, coach and lessons: treat it as a separate large project.
 ## Testing in a browser
 Serve with `python3 -m http.server` and drive with Playwright (headless Chrome is at /usr/bin/google-chrome in Claude's sandbox). Check both a 390×844 touch viewport and a desktop viewport, light and dark.

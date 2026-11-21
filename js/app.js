@@ -147,7 +147,7 @@ function renderHome() {
         <h3 style="font-size:18px;margin-bottom:6px">Recent games</h3>
         <ul class="history">
           ${history.slice(0, 6).map((h) => `<li><span>${esc(h.variantName)} <span class="muted">vs ${esc(h.botName)} (L${h.level})</span></span>
-            <span class="${h.result === 'win' ? 'result-win' : h.result === 'loss' ? 'result-loss' : 'muted'}">${h.result === 'win' ? 'Won' : h.result === 'loss' ? 'Lost' : h.result === 'resigned' ? 'Resigned' : 'Draw'}</span></li>`).join('')}
+            <span class="${h.result === 'win' ? 'result-win' : h.result === 'loss' ? 'result-loss' : 'muted'}">${{ win: 'Won', loss: 'Lost', resigned: 'Resigned', unfinished: 'Unfinished', draw: 'Draw' }[h.result] || 'Draw'}</span></li>`).join('')}
         </ul>
       </section>` : `
       <section class="card">
@@ -347,9 +347,28 @@ let game = null;      // live game controller state
 let view = null;      // BoardView for the current screen
 let gameToken = 0;    // bumps whenever a game starts or is left, to drop stale bot replies
 
+// Every game is kept with its full move list so it can be replayed and reviewed later.
+const ARCHIVE_LIMIT = 300;
+function archiveGame(g, result, reason) {
+  const def = getVariant(g.variantId);
+  const bot = LEVELS[g.level] || LEVELS[1];
+  const history = store.get(KEYS.history, []);
+  history.unshift({
+    id: (g.startedAt || Date.now()).toString(36) + Math.random().toString(36).slice(2, 6),
+    variantId: g.variantId, options: g.options, you: g.you, level: g.level,
+    variantName: def.name, botName: bot.name, result, reason,
+    moves: g.moves, plies: g.moves.length, undos: g.undos || 0,
+    startedAt: g.startedAt || null, at: Date.now(),
+  });
+  store.set(KEYS.history, history.slice(0, ARCHIVE_LIMIT));
+}
+
 function startGame(settings) {
   const you = settings.side === 'random' ? (Math.random() < 0.5 ? P1 : P2) : settings.side === 'p2' ? P2 : P1;
   const options = { tournamentRule: settings.tournamentRule, capturePairs: settings.capturePairs };
+  // A game left unfinished is kept in the archive rather than thrown away.
+  const previous = store.get(KEYS.game, null);
+  if (previous && previous.moves && previous.moves.length) archiveGame(previous, 'unfinished', null);
   const saved = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, moves: [], startedAt: Date.now() };
   store.set(KEYS.game, saved);
   game = null;
@@ -712,9 +731,10 @@ function finishGame(resigned = false) {
   const g = game;
   const s = g.state;
   const result = s.winner === g.you ? 'win' : s.winner === 0 ? 'draw' : resigned ? 'resigned' : 'loss';
-  const history = store.get(KEYS.history, []);
-  history.unshift({ variantName: g.def.name, botName: g.bot.name, level: g.level, result, reason: s.winReason, moves: s.ply, at: Date.now() });
-  store.set(KEYS.history, history.slice(0, 30));
+  archiveGame({
+    variantId: g.variantId, options: g.options, you: g.you, level: g.level,
+    moves: s.history.map((h) => [h.x, h.y]), startedAt: g.startedAt, undos: g.undos,
+  }, result, s.winReason);
   store.del(KEYS.game);
   updateGame();
   showResult(result);

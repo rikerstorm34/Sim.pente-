@@ -63,3 +63,65 @@ test('bot vs bot games finish without errors in every variant', () => {
     assert.ok(guard < 400, v.id);
   }
 });
+
+// --- Engine v2: threat search and the higher levels
+import { findVCF } from '../js/ai.js';
+
+test('threat search finds a double-four fork', () => {
+  // Row 10: J10 is blocked (blue); gold K10 L10 M10 → N10 makes a four needing O10.
+  // Column N: N11 N12 N13 gold, N14 blocked → N10 also makes a four needing N9.
+  const s = position('pente', {
+    p1: ['K10', 'L10', 'M10', 'N11', 'N12', 'N13'],
+    p2: ['J10', 'N14', 'C3', 'D3', 'Q17', 'R2'],
+  });
+  const m = findVCF(s, P1, 6, Date.now() + 2000);
+  assert.ok(m, 'should find a forced win');
+  assert.equal(name(m), 'N10');
+});
+
+test('a pair that can be captured out of a four stops the threat search', () => {
+  // Gold four K10 L10 M10 N10 is blocked at J10 (blue) and needs O10.
+  // But gold L10–L11 is a vertical pair with blue at L12: blue L9 captures L10, breaking the four.
+  // So playing N10 to make the four is NOT a forced win; with nothing else, no VCF should exist.
+  const s = position('pente', {
+    p1: ['K10', 'L10', 'M10', 'L11'],
+    p2: ['J10', 'L12', 'A1', 'C1', 'E1'],
+  });
+  const m = findVCF(s, P1, 6, Date.now() + 2000);
+  assert.equal(m, null);
+});
+
+test('levels 4 and 5 take wins and block threats quickly', () => {
+  for (const level of [4, 5]) {
+    const a = position('pente', { p1: ['K10', 'L10', 'M10', 'N10'], p2: ['K12', 'L12', 'J9'] });
+    assert.ok(['J10', 'O10'].includes(name(chooseMove(a, level, seeded(level), { timeScale: 0.2 }))));
+    const b = position('pente', { p1: ['K10', 'L10', 'M10', 'N10'], p2: ['J10', 'C3'], toMove: P2 });
+    assert.equal(name(chooseMove(b, level, seeded(level), { timeScale: 0.2 })), 'O10');
+  }
+});
+
+test('level 4 stops an opponent\'s forced win (the double-four fork)', () => {
+  // Blue to move. Gold threatens the N10 fork from the first test. Blue must deal with it.
+  const s = position('pente', {
+    p1: ['K10', 'L10', 'M10', 'N11', 'N12', 'N13'],
+    p2: ['J10', 'N14', 'C3', 'D3', 'Q17'],
+    toMove: P2,
+  });
+  const m = chooseMove(s, 4, seeded(5), { timeScale: 0.5 });
+  applyMove(s, m.x, m.y);
+  assert.equal(findVCF(s, P1, 8, Date.now() + 2000), null, `blue played ${name(m)} but gold still has a forced win`);
+});
+
+test('a bot that runs out of time mid-search still returns a legal move and leaves no trace', () => {
+  for (const level of [3, 4, 5]) {
+    const s = newGame(resolveVariant('pente'));
+    const rng = seeded(level * 11);
+    for (let i = 0; i < 24 && s.winner === null; i++) {
+      const before = Array.from(s.board).join('');
+      const m = chooseMove(s, level, rng, { timeScale: 0.02 }); // almost no time: forces timeouts
+      assert.equal(Array.from(s.board).join(''), before, 'the real game must not be changed');
+      assert.equal(s.board[idx(m.x, m.y)], 0, `level ${level} picked an occupied point`);
+      applyMove(s, m.x, m.y);
+    }
+  }
+});

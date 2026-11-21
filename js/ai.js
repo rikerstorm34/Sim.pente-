@@ -1,45 +1,61 @@
-// The practice bot. Version 1: pattern scoring plus a short alpha-beta search.
-// It works for every variant because it plays through the same rules engine.
-// Later milestones replace this with a stronger, capture-aware threat search.
+// The practice bots — engine v2.
+//
+// How it thinks:
+//  1. Take an immediate win; block the opponent's immediate win.
+//  2. Threat search ("VCF": victory by continuous fours). Look for a chain of five-threats
+//     the opponent must answer, ending in a win. Captures are respected: a reply that breaks
+//     a four by capturing from it, or that wins by captures, refutes the chain.
+//  3. Stop the opponent's threat chains (higher levels).
+//  4. Otherwise, alpha-beta search with iterative deepening, a transposition table and a
+//     time budget, over the most promising moves, scored by line patterns and capture terms.
+// Everything is played through the rules engine, so every variant is handled correctly.
 
 import {
   SIZE, EMPTY, AXES, DIRS8, idx, inBounds, other,
-  applyMove, undoMove, cloneState, nearbyMoves, capturesAt, winningPointsFor,
+  applyMove, undoMove, cloneState, nearbyMoves, capturesAt, winningPointsFor, isLegal,
 } from './rules.js';
 
 export const LEVELS = {
   1: { name: 'Pip', title: 'Novice', blurb: 'Plays loosely and often misses threats. Good for learning the rules.',
-       depth: 0, noise: 0.9, missThreat: 0.45, missWin: 0.25 },
+       kind: 'greedy', noise: 0.9, missThreat: 0.45, missWin: 0.25 },
   2: { name: 'Juno', title: 'Apprentice', blurb: 'Sees simple threats and captures, but doesn\'t look far ahead.',
-       depth: 2, rootWidth: 10, width: 8, noise: 0.12, missThreat: 0, missWin: 0 },
-  3: { name: 'Ludo', title: 'Tactician', blurb: 'Looks several moves ahead and punishes open pairs.',
-       depth: 4, rootWidth: 12, width: 7, noise: 0.02, missThreat: 0, missWin: 0 },
+       depth: 2, time: 350, rootWidth: 10, width: 8, noise: 0.12, vcf: 0, vcfDefend: false },
+  3: { name: 'Ludo', title: 'Tactician', blurb: 'Looks several moves ahead, finds forcing wins and punishes open pairs.',
+       depth: 5, time: 700, rootWidth: 12, width: 8, noise: 0.03, vcf: 6, vcfDefend: false },
+  4: { name: 'Vega', title: 'Strategist', blurb: 'Searches deeper and sees your forcing sequences coming.',
+       depth: 8, time: 1300, rootWidth: 14, width: 9, noise: 0.01, vcf: 10, vcfDefend: true },
+  5: { name: 'Orion', title: 'Master', blurb: 'The strongest bot. Plays to win from the first move.',
+       depth: 14, time: 2600, rootWidth: 16, width: 10, noise: 0, vcf: 14, vcfDefend: true },
 };
+export const LEVEL_IDS = Object.keys(LEVELS).map(Number);
 
 const WIN = 10_000_000;
-// Value of a 5-cell window holding n of one player's stones and none of the other's.
+const NEAR_WIN = WIN / 2;
+// Value of a 5-cell window holding n stones of one player and none of the other's (for move ordering).
 const WINDOW = [0, 1, 12, 120, 1500, 250000];
+// The same for static evaluation; a completed five is handled by the rules (winner / banked fives).
+const EVAL_WINDOW = [0, 1, 12, 120, 1500, 0];
+
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+class Timeout extends Error {}
+
+// A five-in-a-row wins on the spot only in these variants (threat search relies on that).
+const fiveWinsOutright = (v) => v.fivesToWin === 1 && !v.requireFiveAndCaptures && !v.boat;
 
 // ---------------------------------------------------------------------------
-// Static evaluation, from the point of view of `me`.
+// Zobrist hashing (deterministic tables)
 
-function lineScores(board) {
-  const score = [0, 0, 0];
-  for (const [dx, dy] of AXES) {
-    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
-      const ex = x + dx * 4, ey = y + dy * 4;
-      if (!inBounds(ex, ey)) continue;
-      let a = 0, b = 0;
-      for (let k = 0; k < 5; k++) {
-        const c = board[idx(x + dx * k, y + dy * k)];
-        if (c === 1) a++; else if (c === 2) b++;
-      }
-      if (a && !b) score[1] += WINDOW[a];
-      else if (b && !a) score[2] += WINDOW[b];
-    }
-  }
-  return score;
-}
+const Z = (() => {
+  let seed = 0x9e3779b9;
+  const rnd = () => { seed ^= seed << 13; seed >>>= 0; seed ^= seed >>> 17; seed ^= seed << 5; seed >>>= 0; return seed; };
+  const t = { a: new Uint32Array(SIZE * SIZE * 3), b: new Uint32Array(SIZE * SIZE * 3), side: [rnd(), rnd()], cap: [] };
+  for (let i = 0; i < t.a.length; i++) { t.a[i] = rnd(); t.b[i] = rnd(); }
+  for (let i = 0; i < 64; i++) t.cap.push([rnd(), rnd()]);
+  return t;
+})();
+
+// ---------------------------------------------------------------------------
+// Static evaluation (from the point of view of the side to move)
 
 function captureValue(s, p) {
   const v = s.variant;
@@ -52,39 +68,97 @@ function captureValue(s, p) {
   return val;
 }
 
-// How many of p's stones the opponent could capture next move (a rough "open pairs" count).
-function exposure(s, p) {
-  const sizes = s.variant.captureSizes;
-  if (!sizes.length) return 0;
-  const opp = other(p);
-  let n = 0;
-  for (let i = 0; i < s.board.length; i++) {
-    if (s.board[i] !== EMPTY) continue;
-    const x = i % SIZE, y = (i - x) / SIZE;
-    n += capturesAt(s.board, x, y, opp, sizes).length;
-  }
-  return n;
-}
-
-export function evaluate(s, me) {
+/**
+ * Score the position for the side to move.
+ * Combines line patterns (inside the area where stones are), captures, open pairs and
+ * "four" threats (a line that becomes five with one more stone).
+ */
+export function evaluate(s, me = s.toMove) {
   if (s.winner !== null) return s.winner === me ? WIN : s.winner === 0 ? 0 : -WIN;
-  const opp = other(me);
   const v = s.variant;
-  const lines = lineScores(s.board);
-  // Once a five is banked in Five + Captures, more fives matter much less than captures.
-  const lineWeight = (p) => (v.requireFiveAndCaptures && s.banked[p].length ? 0.25 : 1);
-  let mine = lines[me] * lineWeight(me) + captureValue(s, me) + s.banked[me].length * 5000;
-  let theirs = lines[opp] * lineWeight(opp) + captureValue(s, opp) + s.banked[opp].length * 5000;
-  // Open pairs: worse if the opponent moves next.
-  const toMoveIsOpp = s.toMove === opp;
-  mine -= exposure(s, me) * (toMoveIsOpp ? 260 : 70);
-  theirs -= exposure(s, opp) * (toMoveIsOpp ? 70 : 260);
-  // The side to move has the tempo.
-  return s.toMove === me ? mine * 1.1 - theirs : mine - theirs * 1.1;
+  const b = s.board;
+  const opp = other(me);
+  const stm = s.toMove;
+
+  let minx = SIZE, maxx = -1, miny = SIZE, maxy = -1;
+  for (let i = 0; i < b.length; i++) {
+    if (b[i] === EMPTY) continue;
+    const x = i % SIZE, y = (i - x) / SIZE;
+    if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y;
+  }
+  if (maxx < 0) return 0;
+  const x0 = Math.max(0, minx - 4), x1 = Math.min(SIZE - 1, maxx + 4);
+  const y0 = Math.max(0, miny - 4), y1 = Math.min(SIZE - 1, maxy + 4);
+
+  const line = [0, 0, 0];
+  const fourPts = [null, [], []];
+  for (const [dx, dy] of AXES) {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const ex = x + dx * 4, ey = y + dy * 4;
+      if (ex < x0 || ex > x1 || ey < y0 || ey > y1) continue;
+      let a = 0, c = 0, empty = -1;
+      for (let k = 0; k < 5; k++) {
+        const i = idx(x + dx * k, y + dy * k);
+        const cell = b[i];
+        if (cell === 1) a++; else if (cell === 2) c++; else empty = i;
+      }
+      if (a && !c) { line[1] += EVAL_WINDOW[a]; if (a === 4 && !fourPts[1].includes(empty)) fourPts[1].push(empty); }
+      else if (c && !a) { line[2] += EVAL_WINDOW[c]; if (c === 4 && !fourPts[2].includes(empty)) fourPts[2].push(empty); }
+    }
+  }
+
+  // Open and threatened pairs (and threes in Keryo).
+  const threatened = [0, 0, 0], loose = [0, 0, 0];
+  const sizes = v.captureSizes;
+  if (sizes.length) {
+    for (let y = miny; y <= maxy; y++) for (let x = minx; x <= maxx; x++) {
+      const p = b[idx(x, y)];
+      if (p === EMPTY) continue;
+      const q = other(p);
+      for (const [dx, dy] of AXES) {
+        for (const n of sizes) {
+          const bx = x - dx, by = y - dy, ax = x + dx * n, ay = y + dy * n;
+          if (!inBounds(bx, by) || !inBounds(ax, ay)) continue;
+          const before = b[idx(bx, by)];
+          if (before === p) continue; // not the start of the group
+          let ok = true;
+          for (let k = 1; k < n; k++) if (b[idx(x + dx * k, y + dy * k)] !== p) { ok = false; break; }
+          if (!ok) continue;
+          const after = b[idx(ax, ay)];
+          if (after === p) continue; // longer than n
+          if ((before === q && after === EMPTY) || (after === q && before === EMPTY)) threatened[p] += n;
+          else if (before === EMPTY && after === EMPTY) loose[p] += n;
+        }
+      }
+    }
+  }
+
+  const fiveWins = fiveWinsOutright(v);
+  // Tactical shortcuts: the side to move with a five-point can win now; two five-points for the
+  // side not to move usually can't both be blocked (captures aside).
+  if (fiveWins) {
+    if (fourPts[stm].length) return stm === me ? NEAR_WIN : -NEAR_WIN;
+    const waiting = other(stm);
+    if (fourPts[waiting].length >= 2 && !threatened[waiting]) return waiting === me ? NEAR_WIN / 2 : -NEAR_WIN / 2;
+  }
+  // Capture win available to the side to move.
+  if (v.captureWinStones && !v.requireFiveAndCaptures && threatened[other(stm)] &&
+      s.captured[stm] + 2 >= v.captureWinStones) {
+    return stm === me ? NEAR_WIN : -NEAR_WIN;
+  }
+
+  const lineW = (p) => (v.requireFiveAndCaptures && s.banked[p].length ? 0.25 : 1);
+  const score = (p) => {
+    let val = line[p] * lineW(p) + captureValue(s, p) + s.banked[p].length * 6000 + fourPts[p].length * 900;
+    val -= threatened[p] * (stm === p ? 90 : 300) + loose[p] * 18;
+    return val;
+  };
+  const mine = score(me), theirs = score(opp);
+  return stm === me ? mine * 1.1 - theirs : mine - theirs * 1.1;
 }
 
 // ---------------------------------------------------------------------------
-// Quick per-move score, used to order and prune candidate moves.
+// Move ordering
 
 function windowDelta(board, x, y, p) {
   const opp = other(p);
@@ -98,13 +172,13 @@ function windowDelta(board, x, y, p) {
         const c = board[idx(sx + dx * k, sy + dy * k)];
         if (c === p) mine++; else if (c === opp) theirs++;
       }
-      if (!theirs) { before += WINDOW[mine]; after += WINDOW[mine + 1]; }
+      if (!theirs) { before += WINDOW[mine]; after += WINDOW[Math.min(5, mine + 1)]; }
     }
   }
   return after - before;
 }
 
-// Would placing p at (x, y) create a pair of p's that the opponent can capture right away?
+// Would placing p at (x, y) create a pair that the opponent can capture right away?
 function selfRisk(board, x, y, p, sizes) {
   if (!sizes.includes(2)) return 0;
   const opp = other(p);
@@ -140,63 +214,252 @@ export function quickScore(s, x, y, me, { ignoreDefence = false } = {}) {
   return score;
 }
 
-function orderedMoves(s, me, width, extra = []) {
+function orderedMoves(s, me, width, extra = [], first = null) {
   const moves = nearbyMoves(s, 2).map(([x, y]) => ({ x, y, q: quickScore(s, x, y, me) }));
   moves.sort((a, b) => b.q - a.q);
   const top = moves.slice(0, width);
   for (const [x, y] of extra) {
-    if (!top.some((m) => m.x === x && m.y === y)) top.push({ x, y, q: quickScore(s, x, y, me) });
+    if (!top.some((m) => m.x === x && m.y === y) && isLegal(s, x, y)) top.push({ x, y, q: quickScore(s, x, y, me) });
+  }
+  if (first) {
+    const i = top.findIndex((m) => m.x === first[0] && m.y === first[1]);
+    if (i > 0) top.unshift(top.splice(i, 1)[0]);
+    else if (i < 0 && isLegal(s, first[0], first[1])) top.unshift({ x: first[0], y: first[1], q: 0 });
   }
   return top;
 }
 
 // ---------------------------------------------------------------------------
-// Search
+// Threat search: victory by continuous fours, aware of captures.
 
-function negamax(s, depth, alpha, beta, width, ply) {
-  const me = s.toMove;
-  if (s.winner !== null || depth === 0) {
-    const e = evaluate(s, me);
-    // Prefer quicker wins and slower losses.
-    return e >= WIN ? e - ply : e <= -WIN ? e + ply : e;
+// Moves that give `p` a five-threat (four stones + one empty in a 5-window, no enemy stones),
+// with immediate fives first.
+function fourMakingMoves(s, p) {
+  const b = s.board;
+  const wins = [], fours = [];
+  const seen = new Set();
+  for (const [dx, dy] of AXES) {
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+      const ex = x + dx * 4, ey = y + dy * 4;
+      if (!inBounds(ex, ey)) continue;
+      let mine = 0, theirs = 0;
+      const empties = [];
+      for (let k = 0; k < 5; k++) {
+        const i = idx(x + dx * k, y + dy * k);
+        if (b[i] === p) mine++; else if (b[i] === EMPTY) empties.push(i); else theirs++;
+      }
+      if (theirs) continue;
+      if (mine === 4) { if (!seen.has('w' + empties[0])) { seen.add('w' + empties[0]); wins.push(empties[0]); } }
+      else if (mine === 3) for (const e of empties) if (!seen.has(e)) { seen.add(e); fours.push(e); }
+    }
   }
-  let best = -Infinity;
-  for (const m of orderedMoves(s, me, width)) {
-    applyMove(s, m.x, m.y);
-    const val = -negamax(s, depth - 1, -beta, -alpha, width, ply + 1);
-    undoMove(s);
-    if (val > best) best = val;
-    if (best > alpha) alpha = best;
-    if (alpha >= beta) break;
-  }
-  return best === -Infinity ? evaluate(s, me) : best;
+  return wins.concat(fours.filter((e) => !wins.includes(e)));
 }
+
+// Empty points where `p` would complete a five (four-in-window points), anywhere.
+function fivePoints(s, p) {
+  const b = s.board;
+  const out = [];
+  for (const [dx, dy] of AXES) {
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+      const ex = x + dx * 4, ey = y + dy * 4;
+      if (!inBounds(ex, ey)) continue;
+      let mine = 0, empty = -1, bad = false;
+      for (let k = 0; k < 5; k++) {
+        const i = idx(x + dx * k, y + dy * k);
+        if (b[i] === p) mine++; else if (b[i] === EMPTY) empty = i; else { bad = true; break; }
+      }
+      if (!bad && mine === 4 && !out.includes(empty)) out.push(empty);
+    }
+  }
+  return out;
+}
+
+// Every capture `p` can make right now (points only).
+function captureMoves(s, p) {
+  const sizes = s.variant.captureSizes;
+  if (!sizes.length) return [];
+  const out = [];
+  const b = s.board;
+  const opp = other(p);
+  for (let i = 0; i < b.length; i++) {
+    if (b[i] !== EMPTY) continue;
+    const x = i % SIZE, y = (i - x) / SIZE;
+    let near = false;
+    for (const [dx, dy] of DIRS8) {
+      const nx = x + dx, ny = y + dy;
+      if (inBounds(nx, ny) && b[idx(nx, ny)] === opp) { near = true; break; }
+    }
+    if (near && capturesAt(b, x, y, p, sizes).length) out.push(i);
+  }
+  return out;
+}
+
+/**
+ * Look for a forced win for `attacker` (who must be on move) using only five-threats.
+ * Returns the first move of the winning chain, or null.
+ */
+export function findVCF(state, attacker, maxDepth = 10, deadline = now() + 500, nodeLimit = 30000) {
+  const s = state;
+  if (!fiveWinsOutright(s.variant) || s.toMove !== attacker || s.winner !== null) return null;
+  const defender = other(attacker);
+  let nodes = 0;
+
+  function attack(depth) {
+    if (depth <= 0) return null;
+    for (const i of fourMakingMoves(s, attacker)) {
+      if (++nodes > nodeLimit || ((nodes & 63) === 0 && now() > deadline)) throw new Timeout();
+      const x = i % SIZE, y = (i - x) / SIZE;
+      if (!isLegal(s, x, y)) continue;
+      applyMove(s, x, y);
+      if (s.winner === attacker) { undoMove(s); return i; }
+      if (s.winner !== null) { undoMove(s); continue; }
+      const threats = fivePoints(s, attacker);
+      if (!threats.length) { undoMove(s); continue; }
+      // Defender's options: block a five-point, capture (may break the line or win), or win on the spot.
+      const replies = new Set(threats);
+      for (const c of captureMoves(s, defender)) replies.add(c);
+      for (const w of fivePoints(s, defender)) replies.add(w);
+      let refuted = false;
+      for (const r of replies) {
+        const rx = r % SIZE, ry = (r - rx) / SIZE;
+        if (!isLegal(s, rx, ry)) continue;
+        applyMove(s, rx, ry);
+        const ok = s.winner === null ? attack(depth - 1) !== null : s.winner === attacker;
+        undoMove(s);
+        if (!ok) { refuted = true; break; }
+      }
+      undoMove(s);
+      if (!refuted) return i;
+    }
+    return null;
+  }
+
+  const base = s.history.length;
+  try {
+    const i = attack(maxDepth);
+    return i === null ? null : { x: i % SIZE, y: (i - (i % SIZE)) / SIZE };
+  } catch (e) {
+    // Out of time mid-search: take back every move the search had tried.
+    while (s.history.length > base) undoMove(s);
+    if (e instanceof Timeout) return null;
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Alpha-beta search
+
+class Searcher {
+  constructor(s, cfg) {
+    this.s = s;
+    this.cfg = cfg;
+    this.tt = new Map();
+    this.nodes = 0;
+    this.deadline = Infinity;
+    this.killers = [];
+    this.h1 = 0; this.h2 = 0;
+    for (let i = 0; i < s.board.length; i++) if (s.board[i]) this.toggle(i, s.board[i]);
+    if (s.toMove === 2) { this.h1 ^= Z.side[0]; this.h2 ^= Z.side[1]; }
+    this.stack = [];
+  }
+  toggle(i, p) { const k = i * 3 + p; this.h1 ^= Z.a[k]; this.h2 ^= Z.b[k]; }
+  key() {
+    const s = this.s;
+    const c1 = Z.cap[s.captured[1] & 63], c2 = Z.cap[(s.captured[2] + 17) & 63];
+    const h1 = (this.h1 ^ c1[0] ^ c2[1] ^ (s.banked[1].length * 0x45d9f3b) ^ (s.banked[2].length * 0x119de1f3)) >>> 0;
+    const h2 = (this.h2 ^ c1[1] ^ c2[0]) >>> 0;
+    return h1 * 2097152 + (h2 & 0x1fffff);
+  }
+  make(x, y) {
+    const rec = applyMove(this.s, x, y);
+    this.stack.push([this.h1, this.h2]);
+    const i = idx(x, y);
+    this.toggle(i, rec.player);
+    const opp = other(rec.player);
+    for (const c of rec.captured) this.toggle(c, opp);
+    for (const c of rec.poofed) this.toggle(c, rec.player);
+    this.h1 ^= Z.side[0]; this.h2 ^= Z.side[1];
+    return rec;
+  }
+  unmake() {
+    undoMove(this.s);
+    [this.h1, this.h2] = this.stack.pop();
+  }
+
+  negamax(depth, alpha, beta, ply) {
+    const s = this.s;
+    if ((++this.nodes & 511) === 0 && now() > this.deadline) throw new Timeout();
+    if (s.winner !== null || depth <= 0) {
+      const e = evaluate(s);
+      return e >= NEAR_WIN ? e - ply : e <= -NEAR_WIN ? e + ply : e;
+    }
+    const key = this.key();
+    const hit = this.tt.get(key);
+    let ttMove = null;
+    if (hit) {
+      ttMove = hit.m;
+      if (hit.d >= depth) {
+        if (hit.f === 0) return hit.v;
+        if (hit.f === 1 && hit.v >= beta) return hit.v;
+        if (hit.f === -1 && hit.v <= alpha) return hit.v;
+      }
+    }
+    const width = Math.max(5, this.cfg.width - Math.floor(ply / 2));
+    const killers = this.killers[ply] || [];
+    const moves = orderedMoves(s, s.toMove, width, killers, ttMove);
+    const alpha0 = alpha;
+    let best = -Infinity, bestMove = null;
+    for (const m of moves) {
+      this.make(m.x, m.y);
+      const val = -this.negamax(depth - 1, -beta, -alpha, ply + 1);
+      this.unmake();
+      if (val > best) { best = val; bestMove = [m.x, m.y]; }
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) {
+        const k = this.killers[ply] || (this.killers[ply] = []);
+        if (!k.some((q) => q[0] === m.x && q[1] === m.y)) { k.unshift([m.x, m.y]); k.length = Math.min(k.length, 2); }
+        break;
+      }
+    }
+    if (best === -Infinity) return evaluate(s);
+    if (this.tt.size > 300000) this.tt.clear();
+    this.tt.set(key, { d: depth, v: best, f: best <= alpha0 ? -1 : best >= beta ? 1 : 0, m: bestMove });
+    return best;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Choosing a move
 
 /**
  * Pick a move for the side to move.
  * @param {object} state  game state (not modified)
- * @param {number} level  1..3
+ * @param {number} level  1..5
  * @param {() => number} rng  random source (injectable for tests)
+ * @param {{ timeScale?: number }} opts  timeScale < 1 speeds the bot up (tests)
  * @returns {{x: number, y: number}}
  */
-export function chooseMove(state, level = 2, rng = Math.random) {
+export function chooseMove(state, level = 2, rng = Math.random, opts = {}) {
   const cfg = LEVELS[level] || LEVELS[2];
   const s = cloneState(state);
   const me = s.toMove;
   const opp = other(me);
+  const v = s.variant;
+  const started = now();
+  const budget = (cfg.time || 0) * (opts.timeScale ?? 1);
+  const deadline = started + budget;
 
   const candidates = nearbyMoves(s, 2);
   if (candidates.length === 1) return { x: candidates[0][0], y: candidates[0][1] };
 
-  // 1. Take a win if there is one (lower levels sometimes miss it).
+  // 1. Take a win if there is one (Pip sometimes misses it).
   const wins = winningPointsFor(s, me);
-  if (wins.length && rng() >= cfg.missWin) return { x: wins[0][0], y: wins[0][1] };
-
-  // 2. Points the opponent would win on next move must be considered.
+  if (wins.length && rng() >= (cfg.missWin || 0)) return { x: wins[0][0], y: wins[0][1] };
   const theirWins = winningPointsFor(s, opp);
 
-  // Level 1: greedy with noise and blind spots.
-  if (cfg.depth === 0) {
+  // Pip: greedy with noise and blind spots.
+  if (cfg.kind === 'greedy') {
     const blind = rng() < cfg.missThreat;
     if (theirWins.length && !blind) return { x: theirWins[0][0], y: theirWins[0][1] };
     const scored = candidates.map(([x, y]) => ({ x, y, q: quickScore(s, x, y, me, { ignoreDefence: blind }) }));
@@ -211,21 +474,74 @@ export function chooseMove(state, level = 2, rng = Math.random) {
     return { x: best.x, y: best.y };
   }
 
-  // Levels 2+: alpha-beta over the most promising moves, always including blocks.
-  const root = orderedMoves(s, me, cfg.rootWidth, theirWins);
-  const results = [];
-  for (const m of root) {
-    applyMove(s, m.x, m.y);
-    // Full window at the root so near-equal moves get exact scores.
-    const val = -negamax(s, cfg.depth - 1, -Infinity, Infinity, cfg.width, 1);
-    undoMove(s);
-    results.push({ x: m.x, y: m.y, val });
+  const vcfOk = fiveWinsOutright(v);
+  // 2. A forced win by continuous fours.
+  if (cfg.vcf && vcfOk && !theirWins.length) {
+    const m = findVCF(s, me, cfg.vcf, Math.min(deadline, now() + budget * 0.3));
+    if (m) return m;
   }
-  results.sort((a, b) => b.val - a.val);
-  // A little noise between near-equal moves keeps games varied.
-  const bestVal = results[0].val;
-  const margin = Math.max(50, Math.abs(bestVal) * cfg.noise);
-  const close = results.filter((r) => r.val >= bestVal - margin && Math.abs(bestVal) < WIN / 2);
-  const pick = close.length > 1 ? close[Math.floor(rng() * close.length)] : results[0];
+
+  let root = orderedMoves(s, me, cfg.rootWidth, theirWins);
+
+  // 3. Stop the opponent's forced win, if they have one.
+  if (cfg.vcfDefend && vcfOk && !theirWins.length) {
+    s.toMove = opp;
+    const threat = findVCF(s, opp, cfg.vcf, now() + budget * 0.15);
+    s.toMove = me;
+    if (threat) {
+      const extra = [[threat.x, threat.y], ...captureMoves(s, me).map((i) => [i % SIZE, (i - (i % SIZE)) / SIZE])];
+      const pool = orderedMoves(s, me, cfg.rootWidth + 6, extra);
+      const safe = [];
+      for (const m of pool) {
+        if (now() > started + budget * 0.6) break;
+        applyMove(s, m.x, m.y);
+        const still = s.winner === null && findVCF(s, opp, cfg.vcf, now() + 60, 4000);
+        undoMove(s);
+        if (!still) safe.push(m);
+      }
+      if (safe.length) root = safe;
+    }
+  }
+
+  // 4. Iterative-deepening alpha-beta over the root moves.
+  const searcher = new Searcher(s, cfg);
+  searcher.deadline = deadline;
+  let results = root.map((m) => ({ x: m.x, y: m.y, val: m.q }));
+  let completed = null;
+  const margin = (best) => Math.max(40, Math.abs(best) * cfg.noise);
+  try {
+    for (let depth = 1; depth <= cfg.depth; depth++) {
+      const out = [];
+      let best = -Infinity;
+      for (const m of results) {
+        searcher.make(m.x, m.y);
+        const floor = best === -Infinity ? -Infinity : best - margin(best);
+        const val = -searcher.negamax(depth - 1, -Infinity, -floor, 1);
+        searcher.unmake();
+        out.push({ x: m.x, y: m.y, val });
+        if (val > best) best = val;
+      }
+      out.sort((a, b) => b.val - a.val);
+      results = out;
+      completed = out;
+      if (Math.abs(out[0].val) >= NEAR_WIN) break; // a forced result is known
+      if (now() > started + budget * 0.55) break; // the next depth would not finish
+    }
+  } catch (e) {
+    if (!(e instanceof Timeout)) throw e;
+    // Out of time mid-search: take back every move the search had tried.
+    while (searcher.stack.length) searcher.unmake();
+  }
+  const final = completed || results;
+  final.sort((a, b) => b.val - a.val);
+  const bestVal = final[0].val;
+  const close = Math.abs(bestVal) < NEAR_WIN && cfg.noise > 0
+    ? final.filter((r) => r.val >= bestVal - margin(bestVal))
+    : [final[0]];
+  const pick = close[Math.floor(rng() * close.length)] || final[0];
+  if (!isLegal(state, pick.x, pick.y)) {
+    const fallback = final.find((r) => isLegal(state, r.x, r.y)) || { x: candidates[0][0], y: candidates[0][1] };
+    return { x: fallback.x, y: fallback.y };
+  }
   return { x: pick.x, y: pick.y };
 }

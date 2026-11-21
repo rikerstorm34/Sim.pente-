@@ -33,7 +33,8 @@ Variants exist to train specific skills; each must ship with clear rules and a "
 ## Roadmap
 1. ✅ Rules engine, playable board, basic bot, coach (milestone 1)
    - ✅ Every game (finished or abandoned) is archived with its full move list in `gts.history` (up to 300).
-2. Stronger capture-aware engine (threat-space search), calibrated levels
+2. ✅ Engine v2 (2026-11-21): capture-aware VCF threat search, iterative-deepening alpha-beta with a transposition table and time budget, 5 levels (Pip, Juno, Ludo, Vega, Orion). Each level beat the one below in test matches (9–1, 10–0, 5–3, 4–2). Hints use Vega (L4).
+   - ✅ Stats screen (`#/stats`, `js/stats.js`): win rate, streaks, by opponent/variant/side, endings, captures (replayed from saved moves).
 3. Game review: winning-chances graph, move labels with reasons, key moments with retry (the evidence-backed core)
    - Riker's request: a **game archive** to browse, replay and analyse ANY past game (data already saved since 2026-11-21).
 4. Lessons (rules → shapes → captures → initiative → openings → threat sequences → endgame)

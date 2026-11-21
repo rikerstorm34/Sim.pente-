@@ -3,7 +3,8 @@ import {
   P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other,
 } from './rules.js';
 import { VARIANTS, COMING_LATER, getVariant, resolveVariant } from './variants.js';
-import { LEVELS } from './ai.js';
+import { LEVELS, LEVEL_IDS } from './ai.js';
+import { computeStats } from './stats.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
 
@@ -97,7 +98,7 @@ async function askBot(state, level) {
 
 const routes = {
   '': renderHome, '/': renderHome, '/setup': renderSetup, '/play': renderGame,
-  '/variants': renderVariants, '/learn': () => renderSoon('learn'), '/review': () => renderSoon('review'), '/puzzles': () => renderSoon('puzzles'),
+  '/variants': renderVariants, '/stats': renderStats, '/learn': () => renderSoon('learn'), '/review': () => renderSoon('review'), '/puzzles': () => renderSoon('puzzles'),
 };
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
@@ -108,7 +109,7 @@ function route() {
   const { path, params } = parseHash();
   const fn = routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
-  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home' }[path] || 'home';
+  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || 'home';
   document.querySelectorAll('[data-nav]').forEach((a) => {
     if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
@@ -144,7 +145,10 @@ function renderHome() {
 
   const historyHtml = history.length ? `
       <section class="card">
-        <h3 style="font-size:18px;margin-bottom:6px">Recent games</h3>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">
+          <h3 style="font-size:18px">Recent games</h3>
+          <a href="#/stats" style="font-size:14px;font-weight:600">${(() => { const t = computeStats(history).total; return t.winPct === null ? 'Stats' : `${t.winPct}% wins · Stats`; })()} →</a>
+        </div>
         <ul class="history">
           ${history.slice(0, 6).map((h) => `<li><span>${esc(h.variantName)} <span class="muted">vs ${esc(h.botName)} (L${h.level})</span></span>
             <span class="${h.result === 'win' ? 'result-win' : h.result === 'loss' ? 'result-loss' : 'muted'}">${{ win: 'Won', loss: 'Lost', resigned: 'Resigned', unfinished: 'Unfinished', draw: 'Draw' }[h.result] || 'Draw'}</span></li>`).join('')}
@@ -166,7 +170,7 @@ function renderHome() {
         ${resume}
         <div class="tiles">
           <a class="tile" href="#/setup"><span class="brand-stones" aria-hidden="true" style="width:30px;height:18px"><span class="p1" style="width:18px;height:18px"></span><span class="p2" style="width:18px;height:18px;left:12px"></span></span>
-            <span><strong>Play a bot</strong><small>3 levels · 8 variants</small></span></a>
+            <span><strong>Play a bot</strong><small>${LEVEL_IDS.length} levels · ${VARIANTS.length} variants</small></span></a>
           <a class="tile" href="#/variants">${ICON.grid}<span><strong>Variants</strong><small>Rules and what each trains</small></span></a>
           <a class="tile soon" href="#/learn">${ICON.book}<span><strong>Lessons</strong><small><span class="badge">SOON</span></small></span></a>
           <a class="tile soon" href="#/review">${ICON.chart}<span><strong>Review</strong><small><span class="badge">SOON</span></small></span></a>
@@ -178,6 +182,71 @@ function renderHome() {
           <p style="margin:6px 0 0;font-size:14px">Make five in a row, or capture five pairs by bracketing them. Start with <b>Pip</b> (Level 1) and keep the coach on. The full rules are under <a href="#/variants">Variants</a>.</p>
         </section>
       </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Statistics
+
+function bar(pct) {
+  return `<div style="height:6px;border-radius:3px;background:var(--track);margin-top:4px"><div style="width:${pct || 0}%;height:6px;border-radius:3px;background:var(--accent)"></div></div>`;
+}
+function statTable(rows) {
+  if (!rows.length) return '<p class="muted" style="margin:6px 0 0;font-size:14px">No finished games yet.</p>';
+  return `<div class="stat-rows">${rows.map((r) => `
+    <div class="stat-row">
+      <div style="display:flex;justify-content:space-between;gap:10px"><span>${esc(r.label)}</span>
+        <span class="mono" style="font-size:13px">${r.wins}–${r.losses}${r.draws ? '–' + r.draws : ''} · <b>${r.winPct}%</b></span></div>
+      ${bar(r.winPct)}
+    </div>`).join('')}</div>`;
+}
+
+function renderStats() {
+  const st = computeStats(store.get(KEYS.history, []));
+  const t = st.total;
+  const head = `
+    <div style="margin-bottom:14px">
+      <div class="eyebrow">Your record</div>
+      <h1 style="font-size:28px;margin-top:4px">Statistics</h1>
+      <p class="muted" style="margin:6px 0 0">Built from every game you finish. Unfinished games aren't counted${st.unfinished ? ` (${st.unfinished} so far)` : ''}.</p>
+    </div>`;
+  if (!t.played) {
+    app.innerHTML = head + `<div class="card stack" style="max-width:640px"><p style="margin:0">No finished games yet. Your win rate, streaks and breakdowns will appear here after your first game.</p>
+      <a class="btn primary" href="#/setup">Play a game ${ICON.arrow}</a></div>`;
+    return;
+  }
+  const streak = st.streak.current
+    ? `${st.streak.current} ${st.streak.kind === 'win' ? (st.streak.current > 1 ? 'wins' : 'win') : st.streak.kind === 'loss' ? (st.streak.current > 1 ? 'losses' : 'loss') : 'draws'}`
+    : '—';
+  const ends = (list) => (list.length ? `<ul class="rules" style="margin-top:6px">${list.map(([k, n]) => `<li>${esc(k)}: <b>${n}</b></li>`).join('')}</ul>` : '<p class="muted" style="margin:6px 0 0;font-size:14px">None yet.</p>');
+  app.innerHTML = head + `
+    <div class="stat-grid">
+      <div class="card stat"><div class="eyebrow">Win rate</div><div class="big">${t.winPct}%</div><div class="muted">${t.wins} won · ${t.losses} lost${t.draws ? ` · ${t.draws} drawn` : ''}</div></div>
+      <div class="card stat"><div class="eyebrow">Games</div><div class="big">${t.played}</div><div class="muted">finished</div></div>
+      <div class="card stat"><div class="eyebrow">Current streak</div><div class="big" style="font-size:24px">${esc(streak)}</div><div class="muted">Best win streak: ${st.streak.bestWin}</div></div>
+      <div class="card stat"><div class="eyebrow">Game length</div><div class="big">${st.length.avgMoves ?? '—'}</div><div class="muted">your moves per game${st.length.fastestWin ? ` · fastest win ${st.length.fastestWin}` : ''}</div></div>
+    </div>
+    <section class="card" style="margin-top:14px">
+      <h2 style="font-size:20px">Last ${st.recent.length} games</h2>
+      <div class="form" aria-label="Recent results, newest first">${st.recent.map((r) => `<span class="form-dot ${r}" title="${r === 'W' ? 'Win' : r === 'L' ? 'Loss' : 'Draw'}">${r}</span>`).join('')}</div>
+      <p class="muted" style="margin:6px 0 0;font-size:13px">Newest first.</p>
+    </section>
+    <div class="home-grid" style="margin-top:14px">
+      <section class="card"><h2 style="font-size:20px">By opponent</h2>${statTable(st.byLevel)}</section>
+      <section class="card"><h2 style="font-size:20px">By variant</h2>${statTable(st.byVariant)}</section>
+      <section class="card"><h2 style="font-size:20px">By side</h2>${statTable(st.bySide)}
+        <p class="muted" style="margin:10px 0 0;font-size:13px">Moving first is a real advantage in Pente, so expect a higher win rate as Gold.</p></section>
+      <section class="card"><h2 style="font-size:20px">Captures</h2>
+        ${st.captures ? `
+        <div class="stat-rows">
+          <div class="stat-row" style="display:flex;justify-content:space-between"><span>Pairs you capture per game</span><b class="mono">${st.captures.avgYou}</b></div>
+          <div class="stat-row" style="display:flex;justify-content:space-between"><span>Pairs the bots capture per game</span><b class="mono">${st.captures.avgThem}</b></div>
+          <div class="stat-row" style="display:flex;justify-content:space-between"><span>Times your stones were captured</span><b class="mono">${st.captures.timesCaptured}</b></div>
+        </div>` : '<p class="muted" style="margin:6px 0 0;font-size:14px">Captures are counted for games played from now on.</p>'}
+      </section>
+      <section class="card"><h2 style="font-size:20px">How you win</h2>${ends(st.winsBy)}</section>
+      <section class="card"><h2 style="font-size:20px">How you lose</h2>${ends(st.lossesBy)}
+        ${st.undos ? `<p class="muted" style="margin:10px 0 0;font-size:13px">Undos used: ${st.undos}</p>` : ''}</section>
     </div>`;
 }
 
@@ -281,8 +350,8 @@ function renderSetup(params) {
 
       <section>
         <h2 class="section-title">Opponent</h2>
-        <div class="choice-list three">
-          ${[1, 2, 3].map((l) => `
+        <div class="choice-list levels">
+          ${LEVEL_IDS.map((l) => `
             <label class="choice">
               <input type="radio" name="level" value="${l}" ${l === sel.level ? 'checked' : ''}>
               <span class="body">
@@ -724,12 +793,12 @@ async function onHint() {
   const btn = $('#btn-hint');
   btn.disabled = true;
   const token = gameToken;
-  const move = await askBot(g.state, 3);
+  const move = await askBot(g.state, 4);
   if (token !== gameToken || game !== g) return;
   g.hints = [[move.x, move.y]];
   g.revealed = true; // asking for a hint opens the coach
   g.notes = [{ kind: 'opportunity', tag: 'Hint', title: `Consider ${coordName(move.x, move.y)}`,
-    text: 'This is the move Ludo (Level 3) would play here. Before you take it, try to see why.', points: [[move.x, move.y]] }]
+    text: 'This is the move Vega (Level 4) would play here. Before you take it, try to see why.', points: [[move.x, move.y]] }]
     .concat(g.notes.filter((n) => n.tag !== 'Hint'));
   updateGame();
 }
@@ -779,7 +848,7 @@ function showResult(result) {
   const title = result === 'win' ? 'You win!' : result === 'draw' ? 'Draw' : `${g.bot.name} wins`;
   const sub = REASONS[s.winReason] || '';
   const tip = result === 'win'
-    ? (g.level < 3 ? `Ready for ${LEVELS[g.level + 1].name} (Level ${g.level + 1})?` : 'Try a variant that trains a different skill.')
+    ? (LEVELS[g.level + 1] ? `Ready for ${LEVELS[g.level + 1].name} (Level ${g.level + 1})?` : 'Try a variant that trains a different skill.')
     : 'Use Undo to step back and try the critical moment again, or play another game.';
   const wrap = document.createElement('div');
   wrap.className = 'result';

@@ -66,3 +66,20 @@ test('buildReview: ratings, accuracy, curve and key moments', () => {
   assert.ok(r.accuracy < 100 && r.accuracy > 0);
   assert.equal(r.focus[0][0], 'Captures');
 });
+
+test('a move that keeps a forced win by another route is not called a missed win', async () => {
+  const { analysePosition } = await import('../js/ai.js');
+  const { classify } = await import('../js/review.js');
+  const { newGame, idx, parseCoord, P1, P2 } = await import('../js/rules.js');
+  const { resolveVariant } = await import('../js/variants.js');
+  // Two separate open threes for Gold: an open four from either one wins.
+  const s = newGame(resolveVariant('pente'));
+  for (const c of ['K10', 'L10', 'M10', 'K5', 'L5', 'M5']) s.board[idx(...parseCoord(c))] = P1;
+  for (const c of ['D16', 'Q16', 'D3', 'R3']) s.board[idx(...parseCoord(c))] = P2;
+  s.ply = 20; s.toMove = P1;
+  for (const played of ['N10', 'N5', 'J10', 'J5']) {
+    const a = analysePosition(s, parseCoord(played), { timeMs: 300 });
+    const r = classify(a, parseCoord(played));
+    assert.notEqual(r && r.cls, 'missedWin', `${played} wins too`);
+  }
+});

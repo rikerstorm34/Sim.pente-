@@ -299,4 +299,70 @@ export const MORE_UNITS = [
       },
     ],
   },
+  // ===========================================================================
+  {
+    id: 'u10', title: 'Championship positions', blurb: 'Real positions from the 1983 World Championship. Play the champion\'s side and find the win.',
+    lessons: [
+      {
+        id: '10.1', title: 'Finish like a champion', summary: 'Chains of three or four fours, found by the top players at the board.',
+        steps: [
+          read('From the 1983 World Championship', [
+            'Every position in this unit comes from a real game at the 1983 World Pente Championship in Boston, where twenty of the best players in the world met. You can replay all the games in Review.',
+            'In each one, the player to move had a forced win by a chain of fours, and found it. You play their side. Captures are live, so check that your chain can\'t be broken by one.',
+            'These boards are busy because real games are. Read the whole board before you move: which lines are blocked, which pairs are hanging, and where your fours can run.',
+          ]),
+          puzzle('Game 12: Chen', 3, { moves: ["K10", "J10", "O10", "J8", "H12", "L9", "M10", "N10", "M8", "J11", "J9", "L11", "M9", "M11", "M7", "M6", "K11", "L10", "N11", "M11", "K9", "H9", "K9"] }, [
+            stage('Round 1, game 12. Hai-Chou Chen (Blue) to play against Brad Beatty. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'J9',
+              'Look up and down the J column.', 'Chen found it at the board: J9 starts a chain of fours that Beatty couldn\'t stop.'),
+          ]),
+          puzzle('Game 72: Colbert', 3, { moves: ["K10", "L7", "K7", "L9", "L8", "M9", "K9", "J6", "N9", "L9", "K11", "K12", "M10", "L10", "K7", "K8", "J7", "H7", "L9", "J9"] }, [
+            stage('Round 4, game 72. Robert Colbert (Gold) to play against David Comberrel. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'M9',
+              'Your first four runs along row 9.', 'Colbert found it at the board: M9 starts a chain of fours that Comberrel couldn\'t stop.'),
+          ]),
+          puzzle('Game 20: Cooper', 4, { moves: ["K10", "L11", "N10", "N11", "K12", "M11", "K11", "K9", "L10", "P11", "O11", "M9", "J10", "J12", "L10", "P12", "O11", "K11", "H13", "K11", "J11", "J12", "L9", "J9", "J11", "L8", "L9"] }, [
+            stage('Round 1, game 20. Marvin Cooper (Blue) to play against Brian Silberberg. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'L10',
+              'Your first four runs diagonally, down and to the right.', 'Cooper found it at the board: L10 starts a chain of fours that Silberberg couldn\'t stop.'),
+          ]),
+          puzzle('Game 37: Beatty', 4, { moves: ["K10", "J9", "G10", "J11", "J8", "F11", "G11", "G9", "G12", "H9", "F9", "K9", "L9", "M8", "L9", "E8", "H11", "E7", "J12", "K13", "G14", "G13", "F13"] }, [
+            stage('Round 2, game 37. Brad Beatty (Blue) to play against Brent Rustad. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'F8',
+              'Your first four runs diagonally, up and to the right.', 'Beatty found it at the board: F8 starts a chain of fours that Rustad couldn\'t stop.'),
+          ]),
+          puzzle('Game 51: Webber', 4, { moves: ["K10", "J10", "F10", "L9", "H8", "J9", "J8", "K8", "J11", "J7", "H6", "N9", "H7", "G8", "H8", "H9", "H5", "H4", "J10", "H12", "F7", "H9", "G10", "E10", "K10", "H10", "H11", "H9", "H10", "G10", "M10", "L10", "L8", "L11"] }, [
+            stage('Round 3, game 51. Bill Webber (Gold) to play against Bill Justice. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'G12',
+              'Your first four runs diagonally, down and to the right.', 'Webber found it at the board: G12 starts a chain of fours that Justice couldn\'t stop.'),
+          ]),
+        ],
+      },
+      {
+        id: '10.2', title: 'Long chains', summary: 'Five and six moves deep: the kind of calculation that wins championships.',
+        steps: [
+          read('Calculating further', [
+            'These chains are longer. Before you play the first four, picture the whole sequence: where your opponent must block each time, and what that blocking stone does. A block that lands on one of your other lines can end the attack.',
+            'Watch the capture counts too. If your opponent can capture a stone out of one of your fours, the chain breaks there.',
+            'Two of these positions come from Rollie Tesh\'s games: he won the championship, and in one of them he is the one who gets caught.',
+          ]),
+          puzzle('Game 45: Cooper', 4, { moves: ["K10", "L9", "O10", "L11", "M10", "L10", "L12", "L8", "L7", "N10", "O12", "M9", "O11", "O9", "O13", "O14", "N9", "O8", "O7", "O9", "N9", "P11", "M8", "K6", "K9", "L9", "P8", "N6", "M11", "O9", "K13", "J14"] }, [
+            stage('Round 3, game 45. Marvin Cooper (Gold) to play against John Hawkins. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'K11',
+              'Start on the K column.', 'Cooper found it at the board: K11 starts a chain of fours that Hawkins couldn\'t stop.'),
+          ]),
+          puzzle('Game 89: Colbert', 5, { moves: ["K10", "J9", "G10", "G9", "H9", "J8", "J10", "F11", "J7", "H10", "J11", "J9", "L9", "J12", "J11", "H12", "K8", "M10", "K6", "G12"] }, [
+            stage('Round 5, game 89. Robert Colbert (Gold) to play against Marvin Cooper. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'K7',
+              'Start on the K column. More than one four works here; find any chain that wins.', 'Colbert found it at the board: K7 starts a chain of fours that Cooper couldn\'t stop.'),
+          ]),
+          puzzle('Game 64: Tesh', 5, { moves: ["K10", "L11", "N12", "N11", "K9", "K11", "M11", "K8", "L10", "K9", "O13", "P14", "K10", "J11", "K7", "K9", "M10", "M9", "M12", "H11", "G11", "J10", "N10", "O10", "P9", "O10", "G12", "J9", "H9"] }, [
+            stage('Round 4, game 64. Rollie Tesh (Blue) to play against Marvin Cooper. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'L9',
+              'Your first four runs along row 9.', 'Tesh found it at the board: L9 starts a chain of fours that Cooper couldn\'t stop.'),
+          ]),
+          puzzle('Game 82: Wallace', 5, { moves: ["K10", "K11", "G10", "H13", "J12", "K13", "J10", "H10", "J13", "J11", "G9", "K12", "G11", "G12", "F11"] }, [
+            stage('Round 5, game 82. Dave Wallace (Blue) to play against Rollie Tesh. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'K15',
+              'Start on the K column.', 'Wallace found it at the board: K15 starts a chain of fours that Tesh couldn\'t stop.'),
+          ]),
+          puzzle('Game 16: Hudson', 5, { moves: ["K10", "J11", "G10", "G11", "H11", "J9", "J12", "F9", "K13", "L14", "K12", "K11", "L11", "K11", "H12", "K14", "K12", "L12"] }, [
+            stage('Round 1, game 16. Peter Hudson (Gold) to play against Ken Krenz. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'F12',
+              'Your first four runs along row 12.', 'Hudson found it at the board: F12 starts a chain of fours that Krenz couldn\'t stop.'),
+          ]),
+        ],
+      },
+    ],
+  },
 ];

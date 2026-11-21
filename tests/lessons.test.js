@@ -12,7 +12,7 @@ import { LEVELS } from '../js/ai.js';
 test('lesson ids are unique and in order', () => {
   const ids = ALL_LESSONS.map((l) => l.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.equal(UNITS.length, 9);
+  assert.equal(UNITS.length, 10);
   assert.equal(getLesson('1.1').title, 'Five in a row');
   assert.equal(nextLesson('1.1').id, '1.2');
 });

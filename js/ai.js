@@ -675,7 +675,7 @@ export function analysePosition(state, played = null, { timeMs = 400, maxDepth =
   if (vcf) {
     bestScore = Math.max(bestScore, NEAR_WIN);
     best = [vcf.x, vcf.y];
-    if (same(best)) playedScore = NEAR_WIN;
+    if (same(best) || (played && keepsForcedWin(s, played, me, now() + 400))) playedScore = NEAR_WIN;
   }
 
   // The opponent's best answer to the played move, from the search's memory.
@@ -695,6 +695,33 @@ export function analysePosition(state, played = null, { timeMs = 400, maxDepth =
     else if (allows) allows = null;
   }
   return { best, bestScore, playedScore, forcedWin: !!vcf, allowsForced: allows ? [allows.x, allows.y] : null, reply };
+}
+
+// Does a forcing move still win by force, even if it isn't the chain the search found first?
+// (Only fours are checked: every reply that matters is a block, a capture or a counter-five.)
+function keepsForcedWin(s, played, me, deadline) {
+  const opp = other(me);
+  applyMove(s, played[0], played[1]);
+  try {
+    if (s.winner !== null) return s.winner === me;
+    const threats = fivePoints(s, me);
+    if (!threats.length) return false;
+    const replies = new Set(threats);
+    for (const c of captureMoves(s, opp)) replies.add(c);
+    for (const w of fivePoints(s, opp)) replies.add(w);
+    for (const r of replies) {
+      const rx = r % SIZE, ry = (r - rx) / SIZE;
+      if (!isLegal(s, rx, ry)) continue;
+      if (now() > deadline) return false;
+      applyMove(s, rx, ry);
+      const ok = s.winner === null ? !!findVCF(s, me, 8, Math.min(deadline, now() + 150), 8000) : s.winner === me;
+      undoMove(s);
+      if (!ok) return false;
+    }
+    return true;
+  } finally {
+    undoMove(s);
+  }
 }
 
 function evaluateDeep(s, depth, width) {

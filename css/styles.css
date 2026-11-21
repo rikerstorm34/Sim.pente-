@@ -309,3 +309,10 @@ body.in-game .tabbar { display: none; }
 .stars .dim { color: var(--track); }
 .lesson-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; border-radius: 12px; background: var(--good-bg); border: 1px solid var(--good-bd); color: var(--text); text-decoration: none; font-size: 14px; }
 .lesson-banner svg { width: 18px; height: 18px; color: var(--good); flex-shrink: 0; }
+
+/* Small data tables (1983 openings) */
+.mini-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.mini-table th { text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); padding: 4px 6px; border-bottom: 1px solid var(--border); }
+.mini-table td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.mini-table .num { text-align: right; white-space: nowrap; }
+.mini-table a { color: var(--accent-text); text-decoration: none; }

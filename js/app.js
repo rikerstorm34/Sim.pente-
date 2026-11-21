@@ -8,6 +8,7 @@ import { computeStats } from './stats.js';
 import { buildReview, CLASSES, CLASS_ORDER, FOCUS_TIPS } from './review.js';
 import { computePatterns, REPLY_LABELS } from './patterns.js';
 import { UNITS, ALL_LESSONS, getLesson, nextLesson } from './lessons.js';
+import { PLAYABLE_1983, GAMES_1983, masterEntry, masterId, openingOf, roundOf, OPENING_MOVES, toCoord } from './master-games.js';
 import { setupPosition, checkMove } from './lesson-engine.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
@@ -139,7 +140,7 @@ function route() {
   const { path, params } = parseHash();
   const reviewId = path.startsWith('/review/') ? decodeURIComponent(path.slice(8)) : null;
   const lessonId = path.startsWith('/learn/') ? decodeURIComponent(path.slice(7)) : null;
-  const fn = reviewId ? () => renderReview(reviewId) : lessonId ? () => renderLesson(lessonId, params) : routes[path] || renderHome;
+  const fn = reviewId ? () => renderReview(reviewId, params) : lessonId ? () => renderLesson(lessonId, params) : routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
   const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
   document.querySelectorAll('[data-nav]').forEach((a) => {
@@ -684,7 +685,7 @@ const RESULT_LABEL = { win: 'Won', loss: 'Lost', resigned: 'Resigned', draw: 'Dr
 const CLASS_COLOR = {
   best: '#16706A', excellent: '#2F7C77', good: '#5B8E8A', inaccuracy: '#B08900', mistake: '#D9661C', missedWin: '#D9661C', blunder: '#C0392B',
 };
-const ANALYSIS_VERSION = 1;
+const ANALYSIS_VERSION = 2; // 2: a move that keeps a forced win is no longer marked "missed win"
 const ANALYSIS_LIMIT = 60;
 
 function fmtDate(ts) {
@@ -706,7 +707,15 @@ function saveAnalysis(id, plies, review) {
 }
 const clsBadge = (cls) => (cls ? `<span class="cls-badge" style="--c:${CLASS_COLOR[cls]}">${esc(CLASSES[cls].label)}</span>` : '');
 
+function archiveTabs(tab) {
+  return `<div class="filters" role="tablist" aria-label="Game collections">
+      <a class="chip ${tab === 'mine' ? 'on' : ''}" role="tab" aria-selected="${tab === 'mine'}" href="#/review">Your games</a>
+      <a class="chip ${tab === 'masters' ? 'on' : ''}" role="tab" aria-selected="${tab === 'masters'}" href="#/review?tab=masters">1983 World Championship</a>
+    </div>`;
+}
+
 function renderArchive(params) {
+  if (params.get('tab') === 'masters') { renderMasters(params); return; }
   const all = store.get(KEYS.history, []).filter(reviewable);
   const f = params.get('f') || 'all';
   const vf = params.get('v') || '';
@@ -722,6 +731,7 @@ function renderArchive(params) {
       <h1 style="font-size:28px;margin-top:4px">Your games</h1>
       <p class="muted" style="margin:6px 0 0">Open any game to replay it move by move. The analysis rates each of your moves, explains it, and picks out the moments that decided the game.</p>
     </div>
+    ${archiveTabs('mine')}
     ${all.length ? `
     <div class="filters">
       ${chip('all', 'All')}${chip('wins', 'Wins')}${chip('losses', 'Losses')}${chip('unfinished', 'Unfinished')}
@@ -746,6 +756,66 @@ function renderArchive(params) {
   $('#vf')?.addEventListener('change', (e) => { location.hash = link(f, e.target.value); });
 }
 
+function renderMasters(params) {
+  const pf = params.get('p') || '';
+  const of = params.get('o') || '';
+  const players = [...new Set(PLAYABLE_1983.flatMap((g) => [g.white, g.black]))].sort((a, b) => a.split(' ').pop().localeCompare(b.split(' ').pop()));
+  const openings = Object.keys(OPENING_MOVES).concat('Irregular');
+  let list = PLAYABLE_1983;
+  if (pf) list = list.filter((g) => g.white === pf || g.black === pf);
+  if (of) list = list.filter((g) => openingOf(g.n) === of);
+  const link = (np, no) => `#/review?tab=masters${np ? `&p=${encodeURIComponent(np)}` : ''}${no ? `&o=${encodeURIComponent(no)}` : ''}`;
+  const surname = (n) => n.split(' ').pop();
+
+  // Openings table: how often the first player won with each.
+  const rows = openings.map((name) => {
+    const gs = PLAYABLE_1983.filter((g) => openingOf(g.n) === name);
+    const w = gs.filter((g) => g.winner === 'W').length;
+    return { name, n: gs.length, pct: gs.length ? Math.round((100 * w) / gs.length) : null };
+  }).filter((r) => r.n).sort((a, b) => b.n - a.n);
+  const firstWins = Math.round((100 * PLAYABLE_1983.filter((g) => g.winner === 'W').length) / PLAYABLE_1983.length);
+  const sideView = pf ? (g) => (g.white === pf ? 'W' : 'B') : () => '';
+
+  app.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div class="eyebrow">Review</div>
+      <h1 style="font-size:28px;margin-top:4px">1983 World Championship</h1>
+      <p class="muted" style="margin:6px 0 0;max-width:760px">${PLAYABLE_1983.length} games between twenty of the world's best players (Boston, March 1983; Rollie Tesh won). Replay any game with the engine's analysis, follow either player, and play on from any position. Moves from the U.S. Pente Association's booklet <i>Championship Pente</i>.</p>
+    </div>
+    ${archiveTabs('masters')}
+    <div class="filters">
+      <label class="sr-only" for="mp">Player</label>
+      <select id="mp" class="select"><option value="">All players</option>${players.map((n) => `<option value="${esc(n)}" ${n === pf ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <label class="sr-only" for="mo">Opening</label>
+      <select id="mo" class="select"><option value="">All openings</option>${openings.map((n) => `<option value="${esc(n)}" ${n === of ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+    </div>
+    <div class="game" style="align-items:start">
+      <div class="game-list">
+        ${list.map((g) => {
+          const winName = g.winner === 'W' ? g.white : g.black;
+          const side = sideView(g);
+          return `<a class="game-row" href="#/review/${encodeURIComponent(masterId(g.n))}${side ? `?side=${side}` : ''}">
+            <span class="stone ${g.winner === 'W' ? 'p1' : 'p2'}" aria-hidden="true" style="width:22px;height:22px"></span>
+            <span class="gr-main"><b>${esc(surname(g.white))} – ${esc(surname(g.black))}</b>
+              <small class="muted">Game ${g.n} · ${esc(roundOf(g.n))} · ${esc(openingOf(g.n))} · ${Math.ceil(g.moves.trim().split(/\s+/).length / 2)} moves</small></span>
+            <span class="pill ${g.winner === 'W' ? 'win' : ''}">${esc(surname(winName))} won</span>
+          </a>`;
+        }).join('') || '<p class="muted">No games match these filters.</p>'}
+      </div>
+      <aside class="side">
+        <section class="card">
+          <h2 style="font-size:20px">Openings played</h2>
+          <p class="muted" style="margin:6px 0 10px;font-size:14px">The booklet's own names. Gold (the first player) won ${firstWins}% of these games overall.</p>
+          <table class="mini-table"><thead><tr><th>Opening</th><th class="num">Games</th><th class="num">Gold won</th></tr></thead><tbody>
+          ${rows.map((r) => `<tr><td><a href="${link(pf, r.name)}">${esc(r.name)}</a>${OPENING_MOVES[r.name] ? `<div class="mono muted" style="font-size:11px">${esc(OPENING_MOVES[r.name].split(' ').map(toCoord).join(' '))}</div>` : ''}</td><td class="num mono">${r.n}</td><td class="num mono">${r.pct}%</td></tr>`).join('')}
+          </tbody></table>
+        </section>
+      </aside>
+    </div>`;
+  $('#mp').addEventListener('change', (e) => { location.hash = link(e.target.value, of); });
+  $('#mo').addEventListener('change', (e) => { location.hash = link(pf, e.target.value); });
+}
+
 let rv = null; // the review screen's state
 
 function leaveReview() {
@@ -755,25 +825,47 @@ function leaveReview() {
   rv = null;
 }
 
-function renderReview(id) {
-  const entry = store.get(KEYS.history, []).find((h) => h.id === id);
+function renderReview(id, params = new URLSearchParams()) {
+  const isMaster = id.startsWith('wc83-');
+  const entry = isMaster ? masterEntry(Number(id.slice(5)), params.get('side')) : store.get(KEYS.history, []).find((h) => h.id === id);
   if (!reviewable(entry)) {
     app.innerHTML = `<div class="card stack" style="max-width:640px"><p style="margin:0">That game isn't available. Games played before the archive existed only kept their result.</p><a class="btn" href="#/review">Back to your games</a></div>`;
     return;
   }
   const variant = resolveVariant(entry.variantId, entry.options || {});
   const bot = LEVELS[entry.level] || LEVELS[1];
-  const names = { you: 'You', them: bot.name };
-  rv = { entry, variant, bot, names, cursor: entry.moves.length, review: null, showBest: true, token: 1, onKey: null };
+  const g = entry.master;
+  const viewName = g ? (entry.you === P1 ? g.white : g.black) : 'You';
+  const otherName = g ? (entry.you === P1 ? g.black : g.white) : bot.name;
+  const names = { you: viewName, them: otherName };
+  const labels = g
+    ? { mine: `${viewName.split(' ').pop()}'s accuracy`, theirs: otherName.split(' ').pop(), chances: `${viewName.split(' ').pop()}'s winning chances`, none: `No big mistakes by ${viewName.split(' ').pop()}.`, retry: 'Play on from here (vs Vega)' }
+    : { mine: 'Your accuracy', theirs: bot.name, chances: 'Your winning chances', none: 'No mistakes big enough to count as key moments. Well played.', retry: 'Retry from here' };
+  rv = { entry, variant, bot, names, labels, cursor: entry.moves.length, review: null, showBest: true, token: 1, onKey: null };
 
-  app.innerHTML = `
+  const head = g ? `
+    <div class="game-head" style="margin-bottom:12px">
+      <a class="icon-btn" href="#/review?tab=masters" aria-label="Back to the 1983 games">${ICON.back}</a>
+      <div class="title">
+        <h1>${esc(g.white)} – ${esc(g.black)}</h1>
+        <div class="eyebrow">1983 World Championship · Game ${g.n} · ${esc(roundOf(g.n))} · ${esc(openingOf(g.n))} · ${esc((g.winner === 'W' ? g.white : g.black).split(' ').pop())} won</div>
+      </div>
+    </div>
+    <div class="filters" role="radiogroup" aria-label="Follow a player">
+      <span class="muted" style="font-size:14px">Follow:</span>
+      <a class="chip ${entry.you === P1 ? 'on' : ''}" href="#/review/${encodeURIComponent(id)}?side=W"><span class="stone p1" style="width:14px;height:14px;display:inline-block;vertical-align:-2px"></span> ${esc(g.white)}</a>
+      <a class="chip ${entry.you === P2 ? 'on' : ''}" href="#/review/${encodeURIComponent(id)}?side=B"><span class="stone p2" style="width:14px;height:14px;display:inline-block;vertical-align:-2px"></span> ${esc(g.black)}</a>
+    </div>
+    ${g.note || g.uncertain ? `<p class="muted" style="margin:0 0 12px;font-size:13px">Note on the record: ${esc(g.note || '')}</p>` : ''}` : `
     <div class="game-head" style="margin-bottom:12px">
       <a class="icon-btn" href="#/review" aria-label="Back to your games">${ICON.back}</a>
       <div class="title">
         <h1>${esc(getVariant(entry.variantId).name)} vs ${esc(bot.name)}</h1>
         <div class="eyebrow">${esc(fmtDate(entry.at))} · ${esc(RESULT_LABEL[entry.result] || entry.result)} · you played ${entry.you === P2 ? 'Blue' : 'Gold'}</div>
       </div>
-    </div>
+    </div>`;
+
+  app.innerHTML = head + `
     <div class="game">
       <div class="stack" style="gap:12px">
         <div class="board-wrap" id="board"></div>
@@ -824,7 +916,7 @@ async function rvAnalyse() {
   const box = $('#rv-summary');
   const setProgress = (p) => {
     if (rv !== r || r.token !== token) return;
-    box.innerHTML = `<h2 style="font-size:20px">Analysing your game</h2>
+    box.innerHTML = `<h2 style="font-size:20px">Analysing the game</h2>
       <p class="muted" style="margin:6px 0 10px;font-size:14px">The engine is checking every move. This happens once per game, on your device.</p>
       <div class="progress"><div style="width:${Math.round(p * 100)}%"></div></div>
       <div class="mono muted" style="font-size:12px;margin-top:6px">${Math.round(p * 100)}%</div>`;
@@ -852,6 +944,10 @@ function rvStep(where) {
 function rvRetry(ply) {
   const e = rv.entry;
   const last = store.get(KEYS.setup, {});
+  if (e.master) {
+    startGame({ variantId: 'pente', level: 4, side: e.you === P2 ? 'p2' : 'p1', coach: true, coachMode: last.coachMode || 'quiet', tournamentRule: true, capturePairs: 5 }, e.moves.slice(0, ply));
+    return;
+  }
   startGame({
     variantId: e.variantId, level: e.level, side: e.you === P2 ? 'p2' : 'p1', coach: true,
     coachMode: last.coachMode || 'quiet', tournamentRule: (e.options || {}).tournamentRule !== false,
@@ -873,7 +969,7 @@ function rvUpdate(full = false) {
   $('#rv-counter').textContent = `${k} / ${n}`;
 
   // Move card
-  const who = (mv) => (mv.isYou ? 'You' : r.bot.name);
+  const who = (mv) => (mv.isYou ? r.names.you : r.names.them);
   let card;
   if (!m) card = '<h2 style="font-size:20px">Start of the game</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Step through with the arrows, tap a move below, or jump to a key moment.</p>';
   else {
@@ -885,7 +981,7 @@ function rvUpdate(full = false) {
       ${review ? `<p style="margin:8px 0 0;font-size:14px">${esc(m.text)}</p>` : '<p class="muted" style="margin:8px 0 0;font-size:14px">Ratings appear when the analysis finishes.</p>'}
       ${m.best && m.cls && m.cls !== 'best' ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
         <button class="btn" type="button" id="rv-best"><span>${r.showBest ? 'Hide' : 'Show'} best move (<span class="mono">${esc(m.bestName)}</span>)</span></button>
-        ${m.isYou && rank >= 3 ? `<button class="btn primary" type="button" id="rv-retry">Retry from here</button>` : ''}
+        ${m.isYou && rank >= 3 ? `<button class="btn primary" type="button" id="rv-retry">${esc(rv.labels.retry)}</button>` : ''}
       </div>` : ''}`;
   }
   $('#rv-move').innerHTML = card;
@@ -913,8 +1009,8 @@ function rvUpdate(full = false) {
     const order = CLASS_ORDER.filter((c) => review.counts[c]);
     $('#rv-summary').innerHTML = `
       <div style="display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap">
-        <div><div class="eyebrow">Your accuracy</div><div class="big-num">${review.accuracy ?? '—'}</div></div>
-        <div><div class="eyebrow">${esc(r.bot.name)}</div><div class="big-num muted" style="font-size:24px">${review.theirAccuracy ?? '—'}</div></div>
+        <div><div class="eyebrow">${esc(r.labels.mine)}</div><div class="big-num">${review.accuracy ?? '—'}</div></div>
+        <div><div class="eyebrow">${esc(r.labels.theirs)}</div><div class="big-num muted" style="font-size:24px">${review.theirAccuracy ?? '—'}</div></div>
       </div>
       <div class="cls-counts">${order.map((c) => `<span>${clsBadge(c)} <b class="mono">${review.counts[c]}</b></span>`).join('')}</div>`;
 
@@ -928,8 +1024,8 @@ function rvUpdate(full = false) {
     const g = $('#rv-graph');
     g.hidden = false;
     g.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:baseline"><h2 style="font-size:20px">Your winning chances</h2><span class="muted" style="font-size:12px">tap to jump</span></div>
-      <svg id="rv-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:120px;margin-top:8px;cursor:pointer;display:block" role="img" aria-label="Your winning chances through the game">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><h2 style="font-size:20px">${esc(r.labels.chances)}</h2><span class="muted" style="font-size:12px">tap to jump</span></div>
+      <svg id="rv-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:120px;margin-top:8px;cursor:pointer;display:block" role="img" aria-label="${esc(r.labels.chances)} through the game">
         <rect x="0" y="0" width="${W}" height="${H / 2}" style="fill:var(--good-bg)"></rect>
         <rect x="0" y="${H / 2}" width="${W}" height="${H / 2}" style="fill:var(--warn-bg)"></rect>
         <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" style="stroke:var(--border)" stroke-dasharray="3 4"></line>
@@ -952,9 +1048,9 @@ function rvUpdate(full = false) {
         <p style="margin:4px 0 8px;font-size:14px">${esc(km.text)}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn" type="button" data-goto="${km.ply + 1}">Go to move</button>
-          <button class="btn primary" type="button" data-retry="${km.ply}">Retry from here</button>
+          <button class="btn primary" type="button" data-retry="${km.ply}">${esc(rv.labels.retry)}</button>
         </div>
-      </div>`).join('') : '<p class="muted" style="margin:6px 0 0;font-size:14px">No mistakes big enough to count as key moments. Well played.</p>'}`;
+      </div>`).join('') : `<p class="muted" style="margin:6px 0 0;font-size:14px">${esc(r.labels.none)}</p>`}`;
     kbox.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => { rvStep(b.dataset.goto); window.scrollTo({ top: 0, behavior: 'smooth' }); }));
     kbox.querySelectorAll('[data-retry]').forEach((b) => b.addEventListener('click', () => rvRetry(Number(b.dataset.retry))));
 

@@ -3,7 +3,7 @@
 Project owner: Riker (beginner Pente player, not a coder). He leads design and content review; Claude builds. Explain changes in plain language, not code jargon.
 
 ## What this is
-A Pente training web app: bots at graded levels, an in-game coach, variants that each train a specific skill, and (later) game review, lessons and puzzles. Hosted on GitHub Pages from `main` (repo root). No accounts in v1: everything is saved in the browser's localStorage.
+A Pente training web app: bots at graded levels, an in-game coach, variants that each train a specific skill, and (later) game review, lessons and puzzles. Hosted on GitHub Pages: https://rikerstorm34.github.io/Sim.pente-/ — every push to `main` runs the tests and redeploys (`.github/workflows/pages.yml`). The repo is public. No accounts in v1: everything is saved in the browser's localStorage.
 
 ## Hard constraints
 - **No build step, no dependencies.** Plain ES modules served as static files. Keep it that way unless there is a strong reason; Riker can't maintain a toolchain.

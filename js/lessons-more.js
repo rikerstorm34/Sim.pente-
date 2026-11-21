@@ -197,6 +197,83 @@ export const MORE_UNITS = [
             { variantId: 'five-captures', options: { capturePairs: 8 }, level: 3, side: 'p1', coachMode: 'quiet' }),
         ],
       },
+      {
+        id: '8.8', title: 'D-Pente and DK-Pente', summary: 'One player sets up four stones, the other picks a side.',
+        steps: [
+          read('What changes', [
+            'The opener places the first four stones: two Gold and two Blue, anywhere. The chooser then stays Blue or takes Gold. Gold moves next, and the game goes on as normal Pente. DK-Pente is the same opening with Keryo rules: threes can be captured too, and captures win at 15 stones.',
+            'As the opener, your job is to make the choice hard. If one side is clearly better, the chooser takes it. Aim for a position you would be happy to play from either side.',
+            'As the chooser, judge before you pick. Gold moves next, which is worth a lot, so take Gold unless the set-up hands Blue something real: a stronger shape, or a gold pair that can be attacked.',
+            'Trains: judging a position. Who moves next, whose stones work together, and whose stones are targets.',
+          ], { p1: ['J10', 'M12'], p2: ['K10', 'L10'], hints: ['M10'] }),
+          puzzle('A gift in the set-up', 1, { variant: 'd-pente', p1: ['J10', 'M12'], p2: ['K10', 'L10'], toMove: 'p1' }, [
+            stage('You took Gold. Two blue stones sit side by side with your stone on one end. Capture them.', G('capture'), 'M10',
+              'Close the bracket on the other end.', 'An early capture. When a set-up leaves a pair like that, the choice is easy.'),
+          ]),
+          puzzle('Stay Blue and strike', 2, { variant: 'd-pente', p1: ['K10', 'L10', 'K12'], p2: ['N12', 'H8'], toMove: 'p2' }, [
+            stage('You stayed Blue and Gold has just made a pair. Threaten to capture it.', G('capThreat'), 'M10',
+              'Put a stone on one end of the pair, with the other end still empty.', 'Now Gold has to spend a move on defence instead of attack.'),
+          ]),
+          puzzle('Threes are targets too', 2, { variant: 'dk-pente', p1: ['J10', 'L8'], p2: ['K10', 'L10', 'M10'] }, [
+            stage('DK-Pente uses Keryo captures. Blue has three in a row with your stone on one end. Capture all three.', G('capture', { min: 3 }), 'N10',
+              'Bracket the three just like a pair.', 'Three stones off the board. In DK-Pente a set-up with three in a row can be a trap.'),
+          ]),
+          play('D-Pente practice', 'Play Juno (Level 2) at D-Pente. You are the opener or the chooser at random. Before choosing a side, ask what Vega thinks, then decide for yourself.',
+            { variantId: 'd-pente', level: 2, side: 'p1', coachMode: 'quiet' }),
+        ],
+      },
+      {
+        id: '8.9', title: 'Swap2', summary: 'Three stones, then a choice: Gold, Blue, or two more stones.',
+        steps: [
+          read('What changes', [
+            'The opener places three stones: Gold on the centre, then Blue, then Gold. The chooser can play Gold, play Blue, or add two more stones (Blue, then Gold) and hand the choice back. Blue moves next, then it\'s normal Pente.',
+            'Gold has two stones to Blue\'s one, but Blue moves next. That balance is why Swap2 positions are close.',
+            'Adding two stones is the chooser\'s safety valve: when you can\'t tell which side is better, change the position and make the opener decide.',
+            'Trains: judging a position, and setting one up that is hard to read.',
+          ], { p1: ['K10', 'L10'], p2: ['N12'], hints: ['J10', 'M10'] }),
+          puzzle('Blue moves next', 1, { variant: 'swap2', p1: ['K10', 'L10'], p2: ['N12'], toMove: 'p2' }, [
+            stage('You chose Blue, so you move next. The opener put the two Gold stones side by side. Threaten to capture them.', G('capThreat'), 'J10',
+              'Play on one end of the gold pair.', 'Gold\'s extra stone has become a target.'),
+          ]),
+          puzzle('After two more stones', 2, { variant: 'swap2', p1: ['K10', 'M10', 'N12'], p2: ['L9', 'L11'], toMove: 'p2' }, [
+            stage('You added two stones and the opener chose Gold, so you play Blue and move next. Make an open three.', G('tria'), 'L10',
+              'Your two stones line up through a gap between the gold stones.', 'An open three on your first move, and a lone stone between two golds can\'t be captured.'),
+          ]),
+          play('Swap2 practice', 'Play Ludo (Level 3) at Swap2. You are the opener or the chooser at random. As the opener, try to set up a position Ludo can\'t read.',
+            { variantId: 'swap2', level: 3, side: 'p1', coachMode: 'quiet' }),
+        ],
+      },
+      {
+        id: '8.10', title: 'Connect6', summary: 'Two stones a turn, six in a row, no captures.',
+        steps: [
+          read('What changes', [
+            'Gold places one stone on the centre. After that every turn is two stones, and six or more in a row wins. There are no captures.',
+            'Think in windows: any six points in a line. A window with four of your stones and two empty points can be finished in one turn, so four is already a threat. Your opponent has to cover it, and an open four needs both of their stones.',
+            'The winning idea is the double threat: two separate threats need at least three stones to cover, and your opponent only has two.',
+            'Trains: seeing threats across a whole line, and defending against two stones at once.',
+          ], { p1: ['K10', 'L10', 'M10', 'N10'], p2: ['K12', 'M8'], hints: ['O10', 'P10'] }),
+          puzzle('Finish six', 1, { variant: 'connect6', p1: ['K10', 'L10', 'M10', 'N10', 'L12'], p2: ['K11', 'M11', 'L8', 'N12'], toMove: 'p1' }, [
+            stage('You have four in a row and two stones to play. Put down the first one.', G('points', { points: ['H10', 'J10', 'O10', 'P10'] }), 'O10',
+              'Six needs two more stones on the same line.', 'Five in a row. One more.'),
+            stage('Now finish six.', G('win'), 'P10',
+              'Either end of the five.', 'Six in a row. That\'s the game.'),
+          ]),
+          puzzle('Cover the four', 2, { variant: 'connect6', p1: ['K10', 'M8', 'L13'], p2: ['K12', 'L12', 'M12', 'N12', 'J9'], toMove: 'p1' }, [
+            stage('Blue has an open four on row 12. Any window of six around it can be finished next turn. Place your first blocking stone.', G('points', { points: ['H12', 'J12', 'O12', 'P12'] }), 'J12',
+              'Block right next to the four.', 'One side covered. The other end is still open.'),
+            stage('Cover the rest, so no window of six on that row can be finished.', G('c6block'), 'O12',
+              'The other end of the four.', 'Both ends covered. An open four takes both your stones, which is why it is so strong.'),
+          ]),
+          puzzle('Double threat', 3, { variant: 'connect6', p1: ['K10', 'L10', 'M10', 'K14', 'L14', 'M14'], p2: ['L12', 'P8', 'F15', 'R3'], toMove: 'p1' }, [
+            stage('You have two threes and two stones. Make your first threat.', G('c6four'), 'N10',
+              'Add to one of the threes, on the open side.', 'One threat. Blue could cover it with two stones…'),
+            stage('…unless you make another one now.', G('c6double'), 'N14',
+              'Do the same to the other three.', 'Two threats need more than two stones to cover. You win next turn.'),
+          ]),
+          play('Connect6 practice', 'Play Juno (Level 2) at Connect6. Check every line for four of Juno\'s stones before you place yours, then look for a double threat.',
+            { variantId: 'connect6', level: 2, side: 'p1', coachMode: 'quiet' }),
+        ],
+      },
     ],
   },
   // ===========================================================================

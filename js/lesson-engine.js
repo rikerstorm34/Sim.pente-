@@ -8,6 +8,7 @@ import {
 import { resolveVariant } from './variants.js';
 import { findVCF } from './ai.js';
 import { shapesAt } from './patterns.js';
+import { liveWindows, c6Threats } from './connect6.js';
 
 /**
  * Build a puzzle position.
@@ -28,6 +29,8 @@ export function setupPosition(spec) {
   for (const c of [...(spec.p2 || []), ...(extra.p2 || [])]) s.board[idx(...parseCoord(c))] = P2;
   s.toMove = spec.toMove === 'p2' ? P2 : P1;
   s.ply = 20; // past the opening rules
+  // Connect6: start at the first stone of the side to move's two-stone turn.
+  if (variant.twoStones) s.ply = s.toMove === P2 ? 21 : 23;
   if (spec.captured) {
     s.captured[P1] = (spec.captured.p1 || 0) * 2;
     s.captured[P2] = (spec.captured.p2 || 0) * 2;
@@ -129,6 +132,7 @@ const key = (c) => c.x + ',' + c.y + ':' + c.stones.join('.');
  *  { kind: 'noCaptures' } (opponent has no capture at all afterwards) · { kind: 'capThreat' }
  *  { kind: 'quiet' } (no four and no open three) · { kind: 'doubleCapThreat' } · { kind: 'bank' } (a new five counts, Double Five / Five + Captures)
  *  { kind: 'forcedWin' } · { kind: 'legal' } · { kind: 'points', points: [coords] } · { all: [goals] }
+ *  Connect6: { kind: 'c6block' } · { kind: 'c6four' } · { kind: 'c6double' }
  * @returns {{ ok: boolean, after: object, record: object | null, failed?: string }}
  */
 export function checkMove(state, x, y, goal) {
@@ -173,6 +177,11 @@ export function checkMove(state, x, y, goal) {
       case 'forcedWin': return isForcedWin(cloneState(after), you);
       case 'legal': return true;
       case 'points': return g.points.includes(name);
+      // Connect6 (windows of six): no line left that the opponent can finish next turn;
+      // a new threat of your own; two or more threats, more than two stones can cover.
+      case 'c6block': return after.winner === you || (after.winner === null && liveWindows(after.board, opp, 4).length === 0);
+      case 'c6four': return liveWindows(after.board, you, 4).length > liveWindows(before.board, you, 4).length;
+      case 'c6double': return after.winner === you || c6Threats(after.board, you).cover.length >= 3;
       default: throw new Error('Unknown goal ' + g.kind);
     }
   };

@@ -1,6 +1,6 @@
 // Game Training Sim.pente — app shell, screens and game flow.
 import {
-  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame, parseCoord, cloneState,
+  P1, P2, applyMove, undoMove, illegalReason, toSnapshot, replay, coordName, other, newGame, parseCoord, cloneState, moverOf, firstOfTurn,
 } from './rules.js';
 import { VARIANTS, COMING_LATER, getVariant, resolveVariant } from './variants.js';
 import { LEVELS, LEVEL_IDS } from './ai.js';
@@ -15,6 +15,7 @@ import { PLAYABLE_1983, GAMES_1983, masterEntry, masterId, openingOf, roundOf, O
 import { swapColours, swapColourWords, setupPosition, checkMove } from './lesson-engine.js';
 import { analyse, previewWarning } from './coach.js';
 import { BoardView } from './board.js';
+import { openingStatus, seatColour, CHOICE_LABELS, OPENINGS, describeChances } from './openings.js';
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -95,7 +96,7 @@ try {
     if (e.data.progress !== undefined) { if (p.onProgress) p.onProgress(e.data.progress); return; }
     pending.delete(e.data.id);
     if (e.data.error) p.reject(new Error(e.data.error));
-    else p.resolve(e.data.analysis !== undefined ? e.data.analysis : e.data.move);
+    else p.resolve(e.data.analysis !== undefined ? e.data.analysis : e.data.result !== undefined ? e.data.result : e.data.move);
   };
   worker.onerror = () => { worker = null; for (const p of pending.values()) p.reject(new Error('worker failed')); pending.clear(); };
 } catch { worker = null; }
@@ -122,6 +123,22 @@ function askAnalysis(entry, onProgress) {
     pending.set(id, { resolve, reject, onProgress });
     worker.postMessage({ id, type: 'analyse', variantId: entry.variantId, options: entry.options || {}, moves: entry.moves });
   });
+}
+
+async function askOpening(state, action, extra = {}) {
+  const snapshot = toSnapshot(state);
+  if (worker) {
+    try {
+      return await new Promise((resolve, reject) => {
+        const id = ++reqSeq;
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, type: 'opening', snapshot, action, ...extra });
+      });
+    } catch { /* fall through to inline */ }
+  }
+  const { runOpening } = await import('./openings.js');
+  await new Promise((r) => setTimeout(r, 30));
+  return runOpening(state, action, extra);
 }
 
 async function askBot(state, level) {
@@ -435,6 +452,8 @@ const GOAL_FAIL = {
   split3: 'That isn\'t a split three.', four: 'That doesn\'t make a four.', safe: 'That leaves stones Blue can capture.',
   noCaptures: 'Blue can still capture something.', capThreat: 'That doesn\'t threaten a capture.',
   forcedWin: 'Blue has a defence against that.', stopForced: 'Blue still has a forced win after that.',
+  c6block: 'Blue can still make six next turn.', c6four: 'That doesn\'t make a threat (four in a line with room for six).',
+  c6double: 'Two stones are still enough for Blue to block that.',
   quiet: 'That makes a direct threat; look for a quieter move.', doubleCapThreat: 'That doesn\'t threaten two pairs.', bank: 'That doesn\'t make a new five.',
   points: 'Not that one.', legal: 'That isn\'t allowed.',
 };
@@ -605,6 +624,8 @@ function renderPuzzle(step, body) {
       P.state = res.after;
       P.lastMove = [x, y];
       P.msg = { kind: 'opportunity', text: sg.success };
+      // Connect6: a stage without a reply is the first stone of a two-stone turn.
+      if (!sg.reply && P.stage < step.stages.length - 1) { P.stage++; draw(); return; }
       if (sg.reply && P.stage < step.stages.length - 1) {
         P.busy = true; draw();
         setTimeout(() => {
@@ -827,6 +848,7 @@ function pzAttempt(x, y) {
     P.state = res.after;
     P.lastMove = [x, y];
     P.msg = { kind: 'opportunity', text: sg.success };
+    if (!sg.reply && P.stage < P.puzzle.stages.length - 1) { P.stage++; pzDraw(); return; }
     if (sg.reply && P.stage < P.puzzle.stages.length - 1) {
       P.busy = true; pzDraw();
       setTimeout(() => {
@@ -1488,7 +1510,7 @@ function rvRetry(ply) {
     variantId: e.variantId, level: e.level, side: e.you === P2 ? 'p2' : 'p1', coach: true,
     coachMode: last.coachMode || 'quiet', tournamentRule: (e.options || {}).tournamentRule !== false,
     capturePairs: (e.options || {}).capturePairs || 5,
-  }, e.moves.slice(0, ply), { parent: origin, lesson: e.lesson ? { ...e.lesson, goal: 'variation' } : null });
+  }, e.moves.slice(0, ply), { parent: origin, lesson: e.lesson ? { ...e.lesson, goal: 'variation' } : null, seat: e.seat, decisions: e.decisions });
 }
 
 function rvUpdate(full = false) {
@@ -1498,7 +1520,7 @@ function rvUpdate(full = false) {
   const n = entry.moves.length;
   const k = r.cursor;
   const state = replay(r.variant, entry.moves.slice(0, k));
-  const m = k > 0 ? (review ? review.moves[k - 1] : { ply: k - 1, x: entry.moves[k - 1][0], y: entry.moves[k - 1][1], name: coordName(...entry.moves[k - 1]), isYou: (k - 1) % 2 === (entry.you === P2 ? 1 : 0) }) : null;
+  const m = k > 0 ? (review ? review.moves[k - 1] : { ply: k - 1, x: entry.moves[k - 1][0], y: entry.moves[k - 1][1], name: coordName(...entry.moves[k - 1]), isYou: moverOf(r.variant, k - 1) === (entry.you || P1) }) : null;
   const rings = m && m.cls ? [{ x: m.x, y: m.y, color: CLASS_COLOR[m.cls] }] : [];
   const showBest = m && m.best && m.cls && m.cls !== 'best' && r.showBest && state.board[m.best[1] * 19 + m.best[0]] === 0;
   view.render(state, { last: m ? [m.x, m.y] : null, rings, hints: showBest ? [m.best] : [] });
@@ -1530,7 +1552,9 @@ function rvUpdate(full = false) {
     strip.innerHTML = entry.moves.map((mv, i) => {
       const rm = review ? review.moves[i] : null;
       const dot = rm && rm.cls ? `<i style="background:${CLASS_COLOR[rm.cls]}"></i>` : '';
-      return `<button type="button" class="mv ${i % 2 === 0 ? 'g' : 'b'}" data-ply="${i + 1}">${i % 2 === 0 ? `<span class="n">${i / 2 + 1}.</span>` : ''}${dot}${coordName(mv[0], mv[1])}</button>`;
+      const gold = moverOf(r.variant, i) === P1;
+      const num = r.variant.twoStones ? '' : i % 2 === 0 ? `<span class="n">${i / 2 + 1}.</span>` : '';
+      return `<button type="button" class="mv ${gold ? 'g' : 'b'}" data-ply="${i + 1}">${num}${dot}${coordName(mv[0], mv[1])}</button>`;
     }).join('');
     strip.querySelectorAll('[data-ply]').forEach((b) => b.addEventListener('click', () => rvStep(b.dataset.ply)));
   }
@@ -1718,10 +1742,10 @@ function renderSetup(params) {
 
       <section class="card stack">
         <div>
-          <b>Your stones</b><div class="muted" style="font-size:13px;margin-bottom:8px">Gold always moves first.</div>
+          <b id="side-title">Your stones</b><div class="muted" id="side-sub" style="font-size:13px;margin-bottom:8px">Gold always moves first.</div>
           <div class="segmented" role="radiogroup" aria-label="Your stones">
-            <label><input type="radio" name="side" value="p1" ${sel.side === 'p1' ? 'checked' : ''}><span>Gold · 1st</span></label>
-            <label><input type="radio" name="side" value="p2" ${sel.side === 'p2' ? 'checked' : ''}><span>Blue · 2nd</span></label>
+            <label><input type="radio" name="side" value="p1" ${sel.side === 'p1' ? 'checked' : ''}><span id="side-p1">Gold · 1st</span></label>
+            <label><input type="radio" name="side" value="p2" ${sel.side === 'p2' ? 'checked' : ''}><span id="side-p2">Blue · 2nd</span></label>
             <label><input type="radio" name="side" value="random" ${sel.side === 'random' ? 'checked' : ''}><span>Random</span></label>
           </div>
         </div>
@@ -1744,6 +1768,11 @@ function renderSetup(params) {
       n.hidden = n.closest('label').querySelector('input').value !== vid;
     });
     $('#opt-tournament').hidden = v.config.opening !== 'tournament';
+    const ch = v.config.choice;
+    $('#side-title').textContent = ch ? 'Your seat' : 'Your stones';
+    $('#side-sub').textContent = ch ? 'The opener sets up the first stones; the chooser then picks a colour.' : 'Gold always moves first.';
+    $('#side-p1').textContent = ch ? 'Opener' : 'Gold · 1st';
+    $('#side-p2').textContent = ch ? 'Chooser' : 'Blue · 2nd';
     $('#opt-pairs').hidden = vid !== 'five-captures';
     $('#options').hidden = $('#opt-tournament').hidden && $('#opt-pairs').hidden;
   };
@@ -1776,24 +1805,36 @@ let gameToken = 0;    // bumps whenever a game starts or is left, to drop stale 
 // A game started from the middle of another (Retry from here) is saved as a variation of it.
 function archiveGame(g, result, reason) {
   const id = (g.startedAt || Date.now()).toString(36) + Math.random().toString(36).slice(2, 6);
+  const choice = getVariant(g.variantId).config.choice || null;
+  const setup = choice ? openingStatus(choice, g.moves.length, g.decisions || []).setup : 0;
   saved.add({
     id,
-    variantId: g.variantId, options: g.options, you: g.you, level: g.level, result, reason,
+    variantId: g.variantId, options: g.options, you: g.you || (g.seat === 2 ? P2 : P1), level: g.level, result, reason,
     moves: g.moves, plies: g.moves.length, undos: g.undos || 0,
     startedAt: g.startedAt || null, at: Date.now(),
     lesson: g.lesson ? { id: g.lesson.id, step: g.lesson.step } : null,
     parent: g.parent || null, fromPly: g.parent ? g.fromPly : null,
+    ...(choice ? { seat: g.seat || 1, decisions: g.decisions || [], setup } : {}),
   });
   return id;
 }
 
 function startGame(settings, initialMoves = [], meta = {}) {
-  const you = settings.side === 'random' ? (Math.random() < 0.5 ? P1 : P2) : settings.side === 'p2' ? P2 : P1;
+  let you = settings.side === 'random' ? (Math.random() < 0.5 ? P1 : P2) : settings.side === 'p2' ? P2 : P1;
+  // Choose-your-side openings: the side setting picks a seat (1 = opener, 2 = chooser);
+  // your colour is only known once the opening has been decided.
+  const choice = getVariant(settings.variantId).config.choice || null;
+  let seat = null, decisions = [];
+  if (choice) {
+    seat = meta.seat || (you === P1 ? 1 : 2);
+    decisions = (meta.decisions || []).slice();
+    you = seatColour(choice, decisions, seat);
+  }
   const options = { tournamentRule: settings.tournamentRule, capturePairs: settings.capturePairs };
   // A game left unfinished is kept in the archive rather than thrown away.
   const previous = store.get(KEYS.game, null);
   if (previous && previous.moves && previous.moves.length) archiveGame(previous, 'unfinished', null);
-  const fresh = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now(), lesson: meta.lesson || null, parent: meta.parent || null, fromPly: meta.parent ? initialMoves.length : null };
+  const fresh = { variantId: settings.variantId, options, you, level: settings.level, coach: settings.coach, coachMode: settings.coachMode || 'quiet', moves: initialMoves.slice(), startedAt: Date.now(), lesson: meta.lesson || null, parent: meta.parent || null, fromPly: meta.parent ? initialMoves.length : null, ...(choice ? { seat, decisions } : {}) };
   store.set(KEYS.game, fresh);
   game = null;
   if (location.hash === '#/play') route(); else location.hash = '#/play';
@@ -1809,6 +1850,7 @@ function loadGame() {
       ...cur, state, variant, def: getVariant(cur.variantId), bot: LEVELS[cur.level] || LEVELS[1],
       preview: null, hover: null, warn: null, hints: [], notes: [], thinking: false, resignArmed: false, undos: cur.undos || 0,
       coachMode: cur.coachMode || 'quiet', revealed: false,
+      choice: variant.choice || null, seat: cur.seat || null, decisions: (cur.decisions || []).slice(), judged: null,
     };
   } catch {
     store.del(KEYS.game);
@@ -1822,7 +1864,52 @@ function saveGame() {
     variantId: game.variantId, options: game.options, you: game.you, level: game.level, coach: game.coach, coachMode: game.coachMode, lesson: game.lesson || null,
     parent: game.parent || null, fromPly: game.fromPly ?? null,
     moves: game.state.history.map((h) => [h.x, h.y]), startedAt: game.startedAt, undos: game.undos,
+    ...(game.choice ? { seat: game.seat, decisions: game.decisions } : {}),
   });
+}
+
+// --- Whose turn is it? Normal play goes by colour; a choose-your-side opening goes by seat.
+
+function openingNow(g) {
+  return g.choice ? openingStatus(g.choice, g.state.history.length, g.decisions) : { phase: 'play', setup: 0 };
+}
+
+/** { who: 'you'|'bot', kind: 'move'|'place'|'decide', st } or null once the game is over. */
+function turnOf(g) {
+  const s = g.state;
+  if (s.winner !== null) return null;
+  const st = openingNow(g);
+  if (st.phase === 'play') return { who: s.toMove === g.you ? 'you' : 'bot', kind: 'move', st };
+  const mine = (st.by === 'opener') === (g.seat === 1);
+  return { who: mine ? 'you' : 'bot', kind: st.phase, st };
+}
+/** Is it your turn to put a stone on the board (a move, or a set-up stone)? */
+const myStone = (g) => { const t = turnOf(g); return !!t && t.who === 'you' && t.kind !== 'decide'; };
+/** Your colour, or your seat's starting colour while the opening is undecided. */
+const myColour = (g) => g.you || (g.seat === 2 ? P2 : P1);
+
+/** Hand the turn to whoever is next. */
+function nextTurn() {
+  const g = game;
+  if (!g) return;
+  if (g.state.winner !== null) { finishGame(); return; }
+  const t = turnOf(g);
+  if (t.who === 'bot') { botTurn(); return; }
+  refreshNotes();
+  updateGame();
+}
+
+/** Your decision in a choose-your-side opening. */
+function decide(choice) {
+  const g = game;
+  const t = turnOf(g);
+  if (!t || t.kind !== 'decide' || t.who !== 'you' || !t.st.choices.includes(choice)) return;
+  g.decisions.push(choice);
+  g.judged = null;
+  g.you = seatColour(g.choice, g.decisions, g.seat);
+  saveGame();
+  if (g.you) toast(`You play ${g.you === P1 ? 'Gold' : 'Blue'}.`);
+  nextTurn();
 }
 
 function leaveGame() {
@@ -1840,6 +1927,7 @@ function renderGame() {
   if (g.variant.opening === 'tournament') optsBits.push('Tournament rule');
   if (g.variant.opening === 'center' && g.def.config.opening === 'tournament') optsBits.push('No tournament rule');
   if (g.variantId === 'five-captures') optsBits.push(`${g.options.capturePairs} pairs`);
+  if (g.choice) optsBits.push(g.seat === 1 ? 'You open' : 'You choose');
 
   app.innerHTML = `
     <div class="game-head" style="margin-bottom:12px">
@@ -1891,17 +1979,33 @@ function renderGame() {
   });
 
   if (g.state.winner !== null) { updateGame(); showResult(); return; }
-  if (g.state.toMove !== g.you) botTurn(); else { refreshNotes(); updateGame(); }
+  nextTurn();
 }
 
 // --- Rendering the dynamic parts
+
+function seatCard(mine) {
+  const g = game;
+  const t = turnOf(g);
+  const active = t && (t.who === 'you') === mine;
+  const role = (g.seat === 1) === mine ? 'Opener' : 'Chooser';
+  const name = mine ? `You · ${role}` : `${g.bot.name} · ${role}`;
+  let status = mine ? (active ? (t.kind === 'decide' ? 'Pick a side' : 'Your turn') : 'Waiting') : (active ? `<span class="thinking">Thinking</span>` : g.bot.title);
+  return `
+    <div class="player ${active ? 'active' : ''}">
+      <span class="stone mixed" aria-hidden="true"></span>
+      <div class="who"><div class="name">${esc(name)}</div><div class="status">${status}</div></div>
+      <div class="counts">SIDE NOT CHOSEN</div>
+    </div>`;
+}
 
 function playerCard(p) {
   const g = game, s = g.state, v = g.variant;
   const isYou = p === g.you;
   const active = s.winner === null && s.toMove === p;
   const name = isYou ? `You · ${p === P1 ? 'Gold' : 'Blue'}` : `${g.bot.name} · ${p === P1 ? 'Gold' : 'Blue'}`;
-  let status = isYou ? (active ? 'Your turn' : 'Waiting') : (active ? `<span class="thinking">Thinking</span>` : g.bot.title);
+  const turnWord = v.twoStones && s.ply > 0 ? ` · stone ${firstOfTurn(v, s.ply) ? 1 : 2} of 2` : '';
+  let status = isYou ? (active ? `Your turn${turnWord}` : 'Waiting') : (active ? `<span class="thinking">Thinking</span>` : g.bot.title);
   if (s.winner !== null) status = s.winner === p ? 'Winner' : s.winner === 0 ? 'Draw' : '';
   const counts = [];
   let pips = '';
@@ -1937,7 +2041,7 @@ function renderBoard() {
   const ghostAt = g.preview || g.hover;
   view.render(s, {
     last: lastRec ? [lastRec.x, lastRec.y] : null,
-    ghost: ghostAt && s.winner === null ? [ghostAt[0], ghostAt[1], g.you] : null,
+    ghost: ghostAt && s.winner === null ? [ghostAt[0], ghostAt[1], s.toMove] : null,
     ghostWarn: !!(g.preview && g.warn && coachVisible(g)),
     threats: threatNote ? threatNote.points.slice(0, 4) : [],
     hints: g.hints,
@@ -1947,16 +2051,27 @@ function renderBoard() {
 function updateGame() {
   if (!game || !view) return;
   const g = game, s = g.state;
-  const opp = other(g.you);
-  $('#opp-phone').innerHTML = playerCard(opp);
-  $('#opp-desk').innerHTML = playerCard(opp);
-  $('#me').innerHTML = playerCard(g.you);
+  if (g.you) {
+    const opp = other(g.you);
+    $('#opp-phone').innerHTML = playerCard(opp);
+    $('#opp-desk').innerHTML = playerCard(opp);
+    $('#me').innerHTML = playerCard(g.you);
+  } else {
+    $('#opp-phone').innerHTML = seatCard(false);
+    $('#opp-desk').innerHTML = seatCard(false);
+    $('#me').innerHTML = seatCard(true);
+  }
 
   renderBoard();
 
-  // Coach
+  // Coach (or, during a choose-your-side opening, the opening panel)
   const coach = $('#coach');
-  if (!g.coach) {
+  const turn = turnOf(g);
+  if (turn && turn.kind !== 'move') {
+    coach.innerHTML = openingPanel(g, turn);
+    coach.querySelectorAll('[data-choice]').forEach((b) => b.addEventListener('click', () => decide(b.dataset.choice)));
+    $('#judge', coach)?.addEventListener('click', () => judgeOpening(g));
+  } else if (!g.coach) {
     coach.innerHTML = s.winner === null && s.toMove === g.you && s.ply === 0
       ? '<div class="note"><p>Your move. The first stone goes on the centre point.</p></div>' : '';
   } else {
@@ -2014,15 +2129,16 @@ function updateGame() {
       </div>`;
     $('#btn-confirm').addEventListener('click', () => placeMine(x, y));
     $('#btn-cancel').addEventListener('click', () => { g.preview = null; g.warn = null; updateGame(); });
-  } else if (s.winner === null && !g.thinking && s.toMove === g.you) {
+  } else if (s.winner === null && !g.thinking && myStone(g)) {
     conf.innerHTML = `<div class="muted" style="font-size:12px;text-align:center">Tap a point to preview your move, then confirm. With a mouse, just click.</div>`;
   } else {
     conf.innerHTML = '';
   }
 
   // Buttons
-  $('#btn-undo').disabled = g.thinking || s.history.length === 0 || (s.history.length === 1 && g.you === P2);
-  $('#btn-hint').disabled = g.thinking || s.winner !== null || s.toMove !== g.you;
+  const floor = g.choice ? (turn && turn.kind === 'move' ? turn.st.setup : s.history.length) : 0;
+  $('#btn-undo').disabled = g.thinking || s.history.length <= floor || (!g.choice && s.history.length === 1 && g.you === P2);
+  $('#btn-hint').disabled = g.thinking || !turn || turn.who !== 'you' || turn.kind !== 'move';
   $('#btn-resign').disabled = s.winner !== null;
   const rb = $('#btn-resign');
   rb.classList.toggle('danger-armed', g.resignArmed);
@@ -2030,16 +2146,27 @@ function updateGame() {
 
   // Move list
   const rows = [];
-  for (let i = 0; i < s.history.length; i += 2) {
-    const fmt = (h) => (h ? coordName(h.x, h.y) + (h.captured.length ? ` ×${h.captured.length}` : '') + (h.poofed.length ? ` poof${h.poofed.length}` : '') : '');
-    rows.push(`<span class="n">${i / 2 + 1}.</span><span>${fmt(s.history[i])}</span><span>${fmt(s.history[i + 1])}</span>`);
+  const fmt = (h) => (h ? coordName(h.x, h.y) + (h.captured.length ? ` ×${h.captured.length}` : '') + (h.poofed.length ? ` poof${h.poofed.length}` : '') : '');
+  if (g.variant.twoStones) {
+    // Connect6: one row per round (Gold's turn, then Blue's), two stones a turn.
+    const turns = [];
+    s.history.forEach((h, i) => { if (firstOfTurn(g.variant, i)) turns.push([h]); else turns[turns.length - 1].push(h); });
+    const t2 = (t) => (t ? t.map(fmt).join(' ') : '');
+    rows.push(`<span class="n">1.</span><span>${t2(turns[0])}</span><span>${t2(turns[1])}</span>`);
+    for (let i = 2; i < turns.length; i += 2) rows.push(`<span class="n">${i / 2 + 1}.</span><span>${t2(turns[i])}</span><span>${t2(turns[i + 1])}</span>`);
+    if (!s.history.length) rows.length = 0;
+  } else {
+    for (let i = 0; i < s.history.length; i += 2) {
+      rows.push(`<span class="n">${i / 2 + 1}.</span><span>${fmt(s.history[i])}</span><span>${fmt(s.history[i + 1])}</span>`);
+    }
   }
   $('#moves').innerHTML = rows.join('') || '<span class="muted" style="grid-column:1/-1">No moves yet.</span>';
 }
 
 function refreshNotes() {
   const g = game;
-  g.notes = g.coach ? analyse(g.state, g.you, g.bot.name) : [];
+  const t = turnOf(g);
+  g.notes = g.coach && t && t.kind === 'move' ? analyse(g.state, g.you, g.bot.name) : [];
   g.revealed = false; // Quiet mode starts hidden again each turn.
 }
 
@@ -2047,7 +2174,7 @@ function refreshNotes() {
 
 function onBoardHover(x, y) {
   const g = game;
-  if (!g || g.thinking || g.state.winner !== null || g.state.toMove !== g.you || g.preview) return;
+  if (!g || g.thinking || !myStone(g) || g.preview) return;
   const next = x === null || illegalReason(g.state, x, y) ? null : [x, y];
   if (String(next) === String(g.hover)) return;
   g.hover = next;
@@ -2056,18 +2183,18 @@ function onBoardHover(x, y) {
 
 function onBoardPoint(x, y, pointerType) {
   const g = game;
-  if (!g || g.thinking || g.state.winner !== null || g.state.toMove !== g.you) return;
+  if (!g || g.thinking || !myStone(g)) return;
   const why = illegalReason(g.state, x, y);
   if (why) { toast(why); return; }
   if (pointerType === 'mouse') { placeMine(x, y); return; }
   if (g.preview && g.preview[0] === x && g.preview[1] === y) { placeMine(x, y); return; }
   g.preview = [x, y];
-  g.warn = g.coach ? previewWarning(g.state, x, y, g.bot.name) : null;
+  g.warn = g.coach && turnOf(g).kind === 'move' ? previewWarning(g.state, x, y, g.bot.name) : null;
   updateGame();
 }
 
-function announce(rec, mover) {
-  const who = mover === game.you ? 'You' : game.bot.name;
+function announce(rec, mover, whoOverride) {
+  const who = whoOverride || (mover === game.you ? 'You' : game.bot.name);
   if (rec.captured.length) {
     view.flashRemoved(rec.captured, mover === P1 ? '#3C5FD6' : '#E8B54A');
     toast(`${who} captured ${rec.captured.length} stones.`);
@@ -2089,19 +2216,21 @@ function announce(rec, mover) {
 
 function placeMine(x, y) {
   const g = game;
-  if (!g || g.thinking || g.state.toMove !== g.you || g.state.winner !== null) return;
+  if (!g || g.thinking || !myStone(g)) return;
   if (illegalReason(g.state, x, y)) return;
   g.preview = null; g.hover = null; g.warn = null; g.hints = []; g.resignArmed = false;
+  const mover = g.state.toMove;
   const rec = applyMove(g.state, x, y);
   saveGame();
   updateGame();
-  announce(rec, g.you);
-  if (g.state.winner !== null) { finishGame(); return; }
-  botTurn();
+  announce(rec, mover, 'You');
+  nextTurn();
 }
 
 async function botTurn() {
   const g = game;
+  const turn = turnOf(g);
+  if (turn && turn.kind !== 'move') { botOpening(g, turn); return; }
   const token = gameToken;
   g.thinking = true;
   g.notes = [];
@@ -2127,15 +2256,101 @@ async function botTurn() {
   updateGame();
   announce(rec, other(g.you));
   if (g.state.winner !== null) finishGame();
+  else if (turnOf(g).who === 'bot') botTurn();
+}
+
+// The bot's part of a choose-your-side opening: set-up stones, Swap2's two extra stones, or a choice.
+async function botOpening(g, turn) {
+  const token = gameToken;
+  g.thinking = true;
+  updateGame();
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    if (turn.kind === 'place') {
+      const action = turn.st.by === 'opener' ? 'setup' : 'more';
+      const stones = await askOpening(g.state, action, { level: g.level });
+      for (const [x, y] of stones) {
+        await pause(380);
+        if (token !== gameToken || game !== g) return;
+        if (illegalReason(g.state, x, y)) break;
+        const mover = g.state.toMove;
+        const rec = applyMove(g.state, x, y);
+        saveGame();
+        renderBoard();
+        announce(rec, mover, g.bot.name);
+      }
+    } else {
+      const choice = await askOpening(g.state, 'decide', { choices: turn.st.choices, level: g.level });
+      await pause(450);
+      if (token !== gameToken || game !== g) return;
+      g.decisions.push(choice);
+      g.you = seatColour(g.choice, g.decisions, g.seat);
+      saveGame();
+      if (choice === 'more') toast(`${g.bot.name} added two stones. Now you pick a side.`);
+      else if (g.you) toast(`${g.bot.name} took ${g.you === P1 ? 'Blue' : 'Gold'}, so you play ${g.you === P1 ? 'Gold' : 'Blue'}.`);
+    }
+  } catch (err) {
+    console.error(err);
+    toast('The bot hit a problem. Start a new game to try again.');
+    g.thinking = false; updateGame();
+    return;
+  }
+  if (token !== gameToken || game !== g) return;
+  g.thinking = false;
+  nextTurn();
+}
+
+/** The opening panel shown in place of the coach until the sides are settled. */
+function openingPanel(g, turn) {
+  const st = turn.st, s = g.state;
+  const o = OPENINGS[g.choice];
+  const total = st.setup;
+  const name = o.name;
+  if (turn.kind === 'place') {
+    const k = s.history.length + 1;
+    const colour = s.toMove === P1 ? 'Gold' : 'Blue';
+    if (turn.who === 'bot') return `<div class="note"><div class="eyebrow">${esc(name)}</div><p class="muted">${esc(g.bot.name)} is setting up stone ${k} of ${total}…</p></div>`;
+    const extra = st.by === 'chooser'
+      ? 'You chose to add two stones. When they are down, your opponent picks a side, so keep it even.'
+      : 'You place stones for both sides. Your opponent then picks a side, so set up a position you would be happy to play from either side.';
+    return `<div class="note opening-note"><div class="eyebrow">${esc(name)} · stone ${k} of ${total}</div>
+      <p>Place a <b>${colour}</b> stone${k === 1 && g.choice === 'swap2' ? ' on the centre point' : ''}.</p><p class="muted" style="margin-top:6px">${esc(extra)}</p></div>`;
+  }
+  // Decide
+  if (turn.who === 'bot') return `<div class="note"><div class="eyebrow">${esc(name)}</div><p class="muted">${esc(g.bot.name)} is choosing a side…</p></div>`;
+  const nextColour = s.toMove === P1 ? 'Gold' : 'Blue';
+  const btns = st.choices.map((c) => {
+    const l = CHOICE_LABELS[c];
+    const sub = c === 'gold' || c === 'blue' ? ((c === 'gold') === (s.toMove === P1) ? 'You move next' : `${nextColour} moves next`) : l.sub;
+    return `<button class="btn choice-btn ${c}" type="button" data-choice="${c}"><span class="stone ${c === 'more' ? 'mixed' : (c === 'gold' || c === 'swap') ? 'p1' : 'p2'}" aria-hidden="true"></span><span><b>${esc(l.title)}</b><small>${esc(sub)}</small></span></button>`;
+  }).join('');
+  const judged = g.judged === 'pending' ? '<p class="muted" style="margin-top:8px">Vega is looking…</p>'
+    : g.judged !== null && g.judged !== undefined ? `<p style="margin-top:8px"><b>Vega:</b> ${esc(describeChances(g.judged))}</p>`
+      : '<button class="link" type="button" id="judge">What does Vega think?</button>';
+  return `<div class="note opening-note"><div class="eyebrow">${esc(name)} · your choice</div>
+    <p>${g.seat === 2 && g.decisions.length === 0 ? `${esc(g.bot.name)} has set up the opening.` : 'The stones are down.'} Which side would you rather play?</p>
+    <div class="choice-btns">${btns}</div>${judged}</div>`;
+}
+
+async function judgeOpening(g) {
+  const token = gameToken;
+  g.judged = 'pending';
+  updateGame();
+  const v = await askOpening(g.state, 'judge');
+  if (token !== gameToken || game !== g) return;
+  g.judged = v;
+  updateGame();
 }
 
 function onUndo() {
   const g = game;
   if (!g || g.thinking) return;
-  if (!g.state.history.length) return;
+  const t0 = turnOf(g);
+  const floor = g.choice ? (t0 && t0.kind === 'move' ? t0.st.setup : g.state.history.length) : 0;
+  if (g.state.history.length <= floor) return;
   undoMove(g.state);
   // Step back to your own turn (taking back the bot's reply and your move).
-  while (g.state.history.length && g.state.toMove !== g.you) undoMove(g.state);
+  while (g.state.history.length > floor && g.state.toMove !== g.you) undoMove(g.state);
   if (g.state.toMove !== g.you) { botTurn(); return; }
   g.undos++;
   g.preview = null; g.warn = null; g.hints = []; g.resignArmed = false;
@@ -2147,7 +2362,8 @@ function onUndo() {
 
 async function onHint() {
   const g = game;
-  if (!g || g.thinking || g.state.toMove !== g.you || g.state.winner !== null) return;
+  const t = g && turnOf(g);
+  if (!g || g.thinking || !t || t.who !== 'you' || t.kind !== 'move') return;
   const btn = $('#btn-hint');
   btn.disabled = true;
   const token = gameToken;
@@ -2173,6 +2389,7 @@ function onResign() {
   g.resignArmed = false;
   gameToken++;
   g.thinking = false;
+  if (!g.you) g.you = myColour(g);
   g.state.winner = other(g.you);
   g.state.winReason = 'resign';
   finishGame(true);
@@ -2195,6 +2412,7 @@ function finishGame(resigned = false) {
     variantId: g.variantId, options: g.options, you: g.you, level: g.level,
     moves: s.history.map((h) => [h.x, h.y]), startedAt: g.startedAt, undos: g.undos,
     lesson: g.lesson, parent: g.parent, fromPly: g.fromPly,
+    seat: g.seat, decisions: g.decisions,
   }, result, s.winReason);
   store.del(KEYS.game);
   if (g.lesson && result === 'win' && !g.parent) completeLessonByGame(g.lesson.id, g.lesson.step);
@@ -2241,7 +2459,7 @@ function showResult(result) {
   $('#again', wrap)?.addEventListener('click', () => {
     close();
     if (lesson) { startLessonGame(lesson.id, g.lesson.step); return; }
-    startGame({ variantId: g.variantId, level: g.level, side: g.you === P1 ? 'p1' : 'p2', coach: g.coach, coachMode: g.coachMode,
+    startGame({ variantId: g.variantId, level: g.level, side: g.choice ? (g.seat === 1 ? 'p1' : 'p2') : g.you === P1 ? 'p1' : 'p2', coach: g.coach, coachMode: g.coachMode,
       tournamentRule: g.options.tournamentRule, capturePairs: g.options.capturePairs });
   });
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });

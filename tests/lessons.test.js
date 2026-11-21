@@ -56,7 +56,8 @@ test('every puzzle stage: the answer meets the goal and scripted replies are leg
           assert.equal(s.winner, null, `${l.id} "${st.title}" stage ${i + 1}: game must still be on before the reply`);
           applyMove(s, ...parseCoord(sg.reply));
           assert.equal(s.winner, null, `${l.id} "${st.title}" stage ${i + 1}: the scripted reply must not end the game`);
-        } else {
+        } else if (!(s.variant.twoStones && s.winner === null && i < st.stages.length - 1)) {
+          // (Connect6 is the exception: the first stone of a two-stone turn has no reply.)
           assert.equal(i, st.stages.length - 1, `${l.id} "${st.title}": only the last stage may omit a reply`);
         }
       });

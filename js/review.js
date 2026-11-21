@@ -3,11 +3,12 @@
 // Pure logic (no DOM).
 
 import {
-  P1, other, coordName, xOf, yOf, newGame, applyMove, cloneState,
+  P1, other, moverOf, coordName, xOf, yOf, newGame, applyMove, cloneState,
   winningPointsFor, captureChancesFor, openFourPointsFor, fivePointsFor,
 } from './rules.js';
 import { resolveVariant } from './variants.js';
 import { winChance, FORCED } from './ai.js';
+import { c6WinNow, liveWindows } from './connect6.js';
 
 export const CLASSES = {
   best: { label: 'Best', tone: 'good', rank: 0 },
@@ -43,6 +44,7 @@ export function classify(a, played) {
 
 /** Why a move was good or bad, in plain words, with concept tags for focus areas. */
 export function explain(before, move, a, rating, names) {
+  if (before.variant.twoStones) return explainC6(before, move, a, rating, names);
   const s = before;
   const v = s.variant;
   const me = s.toMove;
@@ -130,6 +132,35 @@ export function explain(before, move, a, rating, names) {
   return { text, tags: [...tags] };
 }
 
+// Connect6: threats are windows of six with four or more stones of one colour.
+function explainC6(s, move, a, rating, names) {
+  const me = s.toMove, opp = other(me), oppName = names[opp];
+  const rank = rating ? CLASSES[rating.cls].rank : 0;
+  const weak = rank >= 3;
+  const neg = [], pos = [], tags = new Set();
+  const winBefore = c6WinNow(s);
+  const oppThreatsBefore = liveWindows(s.board, opp, 4).length;
+  const myThreatsBefore = liveWindows(s.board, me, 4).length;
+  const after = cloneState(s);
+  applyMove(after, move[0], move[1]);
+  if (after.winner === me) return { text: 'Made six. Won the game.', tags: [] };
+  if (winBefore) { neg.push(`Missed a six at ${list(winBefore.map(nm))}.`); tags.add('Finishing'); }
+  const oppThreatsAfter = liveWindows(after.board, opp, 4).length;
+  if (after.toMove === opp && oppThreatsAfter) {
+    neg.push(`Left ${oppName} a line they can finish next turn.`);
+    tags.add('Defence');
+  }
+  if (oppThreatsAfter < oppThreatsBefore) pos.push('Blocked a threat.');
+  if (liveWindows(after.board, me, 4).length > myThreatsBefore) pos.push('Made a threat: four in a line with room for six.');
+  if (weak) {
+    if (!neg.length) { neg.push(`This gives ${oppName} the better game.`); tags.add('Planning'); }
+    if (a && a.best && !neg.some((t) => t.includes(pt(a.best)))) neg.push(`${pt(a.best)} was stronger.`);
+    const text = pos.length ? `${pos.join(' ')} But ${neg.join(' ').replace(/^./, (c) => c.toLowerCase())}` : neg.join(' ');
+    return { text, tags: [...tags] };
+  }
+  return { text: [...neg, ...pos].join(' ') || (rank === 0 ? 'The engine\'s choice too.' : 'A solid move.'), tags: [...tags] };
+}
+
 /**
  * Build the full review of a saved game.
  * @param {object} entry   archived game { variantId, options, moves, you, level }
@@ -143,14 +174,16 @@ export function buildReview(entry, analysis, names = { you: 'You', them: 'Your o
   const nameOf = { [you]: names.you, [them]: names.them };
   const s = newGame(variant);
   const moves = [];
+  // Set-up stones of a choose-your-side opening (D-Pente, Swap2) belong to neither side: not rated.
+  const setup = entry.setup || 0;
   for (let i = 0; i < entry.moves.length; i++) {
     const move = entry.moves[i];
     const a = analysis[i];
     const player = s.toMove;
-    const rating = classify(a, move);
-    const why = explain(s, move, a, rating, nameOf);
+    const rating = i < setup ? null : classify(a, move);
+    const why = i < setup ? { text: 'A set-up stone, placed before the sides were chosen.', tags: [] } : explain(s, move, a, rating, nameOf);
     moves.push({
-      ply: i, player, isYou: player === you, x: move[0], y: move[1], name: pt(move),
+      ply: i, player, isYou: i >= setup && player === you, setup: i < setup, x: move[0], y: move[1], name: pt(move),
       cls: rating ? rating.cls : null, loss: rating ? rating.loss : 0,
       best: a && a.best ? a.best : null, bestName: a && a.best ? pt(a.best) : null,
       text: why.text, tags: why.tags,
@@ -168,7 +201,7 @@ export function buildReview(entry, analysis, names = { you: 'You', them: 'Your o
     let est = a ? toYou(a.bestScore, t.toMove) : 0.5;
     if (i > 0) {
       const prev = analysis[i - 1];
-      const mover = other(t.toMove);
+      const mover = moverOf(variant, i - 1);
       if (prev && prev.playedScore !== null && prev.playedScore !== undefined) est = (est + toYou(prev.playedScore, mover)) / 2;
     }
     if (t.winner !== null) est = t.winner === you ? 1 : t.winner === 0 ? 0.5 : 0;

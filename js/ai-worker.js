@@ -2,6 +2,7 @@
 import { fromSnapshot, newGame, applyMove } from './rules.js';
 import { resolveVariant } from './variants.js';
 import { chooseMove, analysePosition } from './ai.js';
+import { runOpening } from './openings.js';
 
 self.onmessage = (e) => {
   const { id, type } = e.data;
@@ -19,6 +20,14 @@ self.onmessage = (e) => {
         if (played) applyMove(s, played[0], played[1]);
       }
       self.postMessage({ id, analysis: plies });
+      return;
+    }
+    if (type === 'opening') {
+      // Choose-your-side openings: set-up stones, Swap2's two extra stones, or a choice of side.
+      const { snapshot, action, choices, level } = e.data;
+      const variant = resolveVariant(snapshot.variantId, snapshot.options);
+      const state = fromSnapshot(snapshot, variant);
+      self.postMessage({ id, result: runOpening(state, action, { choices, level }) });
       return;
     }
     const { snapshot, level } = e.data;

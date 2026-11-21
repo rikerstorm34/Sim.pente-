@@ -14,6 +14,7 @@ import {
   SIZE, EMPTY, AXES, DIRS8, idx, inBounds, other,
   applyMove, undoMove, cloneState, nearbyMoves, capturesAt, lockedOf, winningPointsFor, isLegal,
 } from './rules.js';
+import { c6Move, c6Analyse } from './connect6.js';
 
 export const LEVELS = {
   1: { name: 'Pip', title: 'Novice', blurb: 'Plays loosely and often misses threats. Good for learning the rules.',
@@ -480,6 +481,7 @@ class Searcher {
  * @returns {{x: number, y: number}}
  */
 export function chooseMove(state, level = 2, rng = Math.random, opts = {}) {
+  if (state.variant.twoStones) return c6Move(state, level, rng); // Connect6 has its own bot
   const cfg = LEVELS[level] || LEVELS[2];
   const s = cloneState(state);
   const me = s.toMove;
@@ -603,6 +605,7 @@ export const FORCED = NEAR_WIN / 2;
  * Scores are from the point of view of the side to move.
  */
 export function analysePosition(state, played = null, { timeMs = 400, maxDepth = 8, rootWidth = 12, width = 8, vcfDepth = 10 } = {}) {
+  if (state.variant.twoStones) return c6Analyse(state, played);
   const s = cloneState(state);
   if (s.winner !== null) {
     const score = s.winner === s.toMove ? WIN : s.winner === 0 ? 0 : -WIN;

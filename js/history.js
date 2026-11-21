@@ -28,7 +28,7 @@ export function decodeMoves(str) {
 
 function pack(e) {
   const extra = {};
-  for (const k of ['lesson', 'parent', 'fromPly', 'start']) if (e[k] !== undefined && e[k] !== null) extra[k] = e[k];
+  for (const k of ['lesson', 'parent', 'fromPly', 'start', 'seat', 'decisions', 'setup']) if (e[k] !== undefined && e[k] !== null) extra[k] = e[k];
   const opts = e.options && Object.keys(e.options).length ? e.options : 0;
   return [e.id, e.variantId, opts, e.you, e.level, e.result, e.reason || 0, encodeMoves(e.moves || []), e.undos || 0, e.startedAt || 0, e.at || 0, Object.keys(extra).length ? extra : 0];
 }

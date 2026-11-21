@@ -210,9 +210,24 @@ export function runThrough(board, x, y, player, axis) {
   return cells;
 }
 
+// A winning line: five in a row (six in Connect6). With overlineWins off, longer lines don't count.
 function isFiveRun(len, variant) {
-  return variant.overlineWins ? len >= 5 : len === 5;
+  const n = variant.lineToWin || 5;
+  return variant.overlineWins ? len >= n : len === n;
 }
+
+/**
+ * Who places stone number `ply` (0-based). Normally players alternate; in Connect6 (twoStones)
+ * the first player places one stone, then each turn is two stones.
+ */
+export function moverOf(variant, ply) {
+  if (!variant.twoStones) return ply % 2 === 0 ? P1 : P2;
+  if (ply === 0) return P1;
+  return ((ply - 1) >> 1) % 2 === 0 ? P2 : P1;
+}
+
+/** Connect6: is this the first stone of a two-stone turn? */
+export const firstOfTurn = (variant, ply) => !variant.twoStones || ply === 0 || (ply - 1) % 2 === 0;
 
 /** Fives (one per axis at most) that pass through (x, y) for `player`. */
 export function fivesThrough(board, x, y, player, variant) {
@@ -284,7 +299,7 @@ export function applyMove(s, x, y) {
   record.poofed = poofSet;
 
   s.ply += 1;
-  s.toMove = opp;
+  s.toMove = v.twoStones ? moverOf(v, s.ply) : opp;
 
   decideWinner(s, record, x, y, player);
   s.history.push(record);

@@ -5,6 +5,7 @@ import {
   other, coordName, xOf, yOf, cloneState, applyMove, undoMove,
   winningPointsFor, captureChancesFor, openFourPointsFor, fivePointsFor,
 } from './rules.js';
+import { c6WinNow, c6Threats, liveWindows, stonesLeft } from './connect6.js';
 
 const name = (i) => coordName(xOf(i), yOf(i));
 const pt = ([x, y]) => coordName(x, y);
@@ -16,6 +17,7 @@ const list = (arr) => (arr.length <= 1 ? arr.join('') : arr.slice(0, -1).join(',
  */
 export function analyse(s, you, oppName = 'Your opponent') {
   if (s.winner !== null || s.toMove !== you) return [];
+  if (s.variant.twoStones) return connect6Notes(s, you, oppName);
   const opp = other(you);
   const notes = [];
   const v = s.variant;
@@ -77,6 +79,15 @@ export function analyse(s, you, oppName = 'Your opponent') {
  */
 export function previewWarning(s, x, y, oppName = 'Your opponent') {
   if (s.winner !== null) return null;
+  if (s.variant.twoStones) {
+    // Only the last stone of a turn can leave a threat uncovered.
+    const scratch = cloneState(s);
+    const you = scratch.toMove;
+    applyMove(scratch, x, y);
+    if (scratch.winner === you || scratch.toMove === you) return null;
+    const t = c6Threats(scratch.board, other(you));
+    return t.windows.length ? `Careful: after this, ${oppName} can still make six (cover ${list(t.cover.map(name))}).` : null;
+  }
   const you = s.toMove;
   const opp = other(you);
   const scratch = cloneState(s);
@@ -95,4 +106,44 @@ export function previewWarning(s, x, y, oppName = 'Your opponent') {
     }
   }
   return null;
+}
+
+// Connect6: think in windows of six. Four or five of one colour with the rest empty can be
+// finished in one turn of two stones.
+function connect6Notes(s, you, oppName) {
+  const opp = other(you);
+  const notes = [];
+  const left = stonesLeft(s);
+  const win = c6WinNow(s);
+  if (win) {
+    notes.push({ kind: 'opportunity', tag: 'Winning move', title: 'You can make six this turn',
+      text: left === 2 ? 'Two stones finish one of your lines. Can you find them?' : 'One stone finishes six. Can you find it?',
+      points: win.map((i) => [xOf(i), yOf(i)]), reveal: true });
+    return notes;
+  }
+  const t = c6Threats(s.board, opp);
+  if (t.windows.length) {
+    const pts = t.cover.map((i) => [xOf(i), yOf(i)]);
+    notes.push({ kind: 'threat', tag: 'Must block', title: `${oppName} can make six next turn`,
+      text: t.cover.length > left
+        ? `${oppName} has more threats than you have stones to block them. Cover what you can at ${list(t.cover.map(name))}, or look for a six of your own.`
+        : `${oppName} has four or more in a line with room to finish. ${left === 2 ? 'Use your stones' : 'Use this stone'} to cover ${list(t.cover.map(name))}.`,
+      points: pts });
+  } else {
+    const threes = liveWindows(s.board, opp, 3);
+    if (threes.length >= 2) {
+      notes.push({ kind: 'threat', tag: 'Building', title: `${oppName} is building`,
+        text: `${oppName} has three in a line with room to grow in more than one place. Two more stones there would make a threat you have to answer.`,
+        points: [] });
+    }
+  }
+  if (left === 2 && !t.windows.length) {
+    const mine = liveWindows(s.board, you, 3);
+    if (mine.length) {
+      notes.push({ kind: 'opportunity', tag: 'Attack', title: 'You can make a threat',
+        text: 'One of your lines has three stones with room to grow. Adding to it makes a threat your opponent must spend stones on. Two threats at once are more than two stones can block.',
+        points: [], reveal: false });
+    }
+  }
+  return notes;
 }

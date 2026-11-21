@@ -8,6 +8,8 @@ import { computeStats } from './stats.js';
 import { buildReview, CLASSES, CLASS_ORDER, FOCUS_TIPS } from './review.js';
 import { computePatterns, REPLY_LABELS } from './patterns.js';
 import { UNITS, ALL_LESSONS, getLesson, nextLesson } from './lessons.js';
+import { THEMES, collection, buildPuzzle, hintRing, emptyProgress, record as recordPuzzle, pickNext, summary as puzzleSummary } from './puzzles.js';
+import { masterStats, openingTree } from './master-stats.js';
 import { PLAYABLE_1983, GAMES_1983, masterEntry, masterId, openingOf, roundOf, OPENING_MOVES, toCoord } from './master-games.js';
 import { setupPosition, checkMove } from './lesson-engine.js';
 import { analyse, previewWarning } from './coach.js';
@@ -24,7 +26,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage full or blocked */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup', analysis: 'gts.analysis', lessons: 'gts.lessons' };
+const KEYS = { theme: 'gts.theme', game: 'gts.currentGame', history: 'gts.history', setup: 'gts.lastSetup', analysis: 'gts.analysis', lessons: 'gts.lessons', puzzles: 'gts.puzzles' };
 
 const ICON = {
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
@@ -129,7 +131,7 @@ async function askBot(state, level) {
 
 const routes = {
   '': renderHome, '/': renderHome, '/setup': renderSetup, '/play': renderGame,
-  '/variants': renderVariants, '/stats': renderStats, '/learn': renderLearn, '/review': renderArchive, '/puzzles': () => renderSoon('puzzles'),
+  '/variants': renderVariants, '/stats': renderStats, '/learn': renderLearn, '/review': renderArchive, '/puzzles': renderPuzzles,
 };
 function parseHash() {
   const h = location.hash.replace(/^#/, '');
@@ -142,13 +144,14 @@ function route() {
   const lessonId = path.startsWith('/learn/') ? decodeURIComponent(path.slice(7)) : null;
   const fn = reviewId ? () => renderReview(reviewId, params) : lessonId ? () => renderLesson(lessonId, params) : routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
-  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'home', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
+  const navKey = { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'puzzles', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
   document.querySelectorAll('[data-nav]').forEach((a) => {
     if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   if (path !== '/play') leaveGame();
   leaveReview();
   leaveLesson();
+  leavePuzzles();
   fn(params);
   window.scrollTo(0, 0);
 }
@@ -331,7 +334,7 @@ function renderLearn() {
     <div style="margin-bottom:14px">
       <div class="eyebrow">Learn</div>
       <h1 style="font-size:28px;margin-top:4px">Lessons</h1>
-      <p class="muted" style="margin:6px 0 0;max-width:720px">Nine units that build on each other, from the rules to master-level ideas, with a lesson for every variant. Each lesson explains one idea, then gives you puzzles that get harder (some take several moves) and a practice game against a bot.</p>
+      <p class="muted" style="margin:6px 0 0;max-width:720px">Eleven units that build on each other, from the rules to master-level ideas, with a lesson for every variant and the openings and positions of the 1983 world championship. Each lesson explains one idea, then gives you puzzles that get harder (some take several moves) and a practice game against a bot.</p>
     </div>
     ${next ? `<section class="card stack" style="margin-bottom:14px">
       <div class="eyebrow" style="color:var(--aqua)">${lessonsDone() ? 'Continue' : 'Start here'} · Unit ${next.unitId.slice(1)} · ${esc(next.unitTitle)}</div>
@@ -375,14 +378,17 @@ const GOAL_FAIL = {
   split3: 'That isn\'t a split three.', four: 'That doesn\'t make a four.', safe: 'That leaves stones Blue can capture.',
   noCaptures: 'Blue can still capture something.', capThreat: 'That doesn\'t threaten a capture.',
   forcedWin: 'Blue has a defence against that.', stopForced: 'Blue still has a forced win after that.',
+  quiet: 'That makes a direct threat; look for a quieter move.', doubleCapThreat: 'That doesn\'t threaten two pairs.', bank: 'That doesn\'t make a new five.',
   points: 'Not that one.', legal: 'That isn\'t allowed.',
 };
 function failReason(state, x, y, goal) {
+  const opp = state.toMove === P1 ? 'Blue' : 'Gold';
+  const say = (t) => t.replace(/Blue/g, opp);
   if (goal.all) {
-    for (const g of goal.all) if (!checkMove(state, x, y, g).ok) return GOAL_FAIL[g.kind] || 'Not quite.';
+    for (const g of goal.all) if (!checkMove(state, x, y, g).ok) return say(GOAL_FAIL[g.kind] || 'Not quite.');
     return 'Not quite.';
   }
-  return GOAL_FAIL[goal.kind] || 'Not quite.';
+  return say(GOAL_FAIL[goal.kind] || 'Not quite.');
 }
 
 function renderLesson(id, params) {
@@ -576,6 +582,220 @@ function renderPuzzle(step, body) {
   draw();
 }
 
+
+// ---------------------------------------------------------------------------
+// Puzzle trainer
+
+let pz = null; // the trainer's state
+
+function leavePuzzles() {
+  if (!pz) return;
+  pz.token++;
+  pz = null;
+}
+
+function puzzleItems() {
+  return collection(store.get(KEYS.history, []), store.get(KEYS.analysis, {}));
+}
+
+function renderPuzzles(params) {
+  const src = params.get('src') || 'all';
+  const theme = params.get('t') || '';
+  const level = Number(params.get('lv')) || 0;
+  const all = puzzleItems();
+  const items = all.filter((i) => (src === 'all' || i.source === src) && (!theme || i.theme === theme) && (!level || i.level === level));
+  const progress = store.get(KEYS.puzzles, null) || emptyProgress();
+  const sum = puzzleSummary(all, progress);
+  const link = (o) => {
+    const q = new URLSearchParams();
+    const v = { src, t: theme, lv: level || '', ...o };
+    if (v.src && v.src !== 'all') q.set('src', v.src);
+    if (v.t) q.set('t', v.t);
+    if (v.lv) q.set('lv', v.lv);
+    const qs = q.toString();
+    return '#/puzzles' + (qs ? '?' + qs : '');
+  };
+  const counts = { champions: all.filter((i) => i.source === 'champions').length, lessons: all.filter((i) => i.source === 'lessons').length, mine: all.filter((i) => i.source === 'mine').length };
+  const chip = (key, label) => `<a class="chip ${src === key ? 'on' : ''}" href="${link({ src: key, t: '' })}">${label}</a>`;
+  const themesHere = Object.keys(THEMES).filter((t) => all.some((i) => i.theme === t && (src === 'all' || i.source === src)));
+
+  app.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div class="eyebrow">Practice</div>
+      <h1 style="font-size:28px;margin-top:4px">Puzzles</h1>
+      <p class="muted" style="margin:6px 0 0;max-width:760px">${all.length} puzzles: positions from the 1983 World Championship, every lesson puzzle, and wins you missed in your own games. Championship puzzles come up rotated or mirrored, so each one has eight variations. Puzzles you miss come back a few puzzles later until you get them.</p>
+    </div>
+    <div class="pz-stats">
+      <div><div class="eyebrow">Solved</div><div class="big-num">${sum.solved}<span class="muted" style="font-size:16px"> / ${sum.total}</span></div></div>
+      <div><div class="eyebrow">Streak</div><div class="big-num">${sum.streak}</div></div>
+      <div><div class="eyebrow">Best streak</div><div class="big-num">${sum.best}</div></div>
+      <div><div class="eyebrow">To retry</div><div class="big-num">${sum.due}</div></div>
+    </div>
+    <div class="filters">
+      ${chip('all', 'All')}${chip('champions', `Champions <span class="muted">${counts.champions}</span>`)}${chip('lessons', `Lessons <span class="muted">${counts.lessons}</span>`)}${chip('mine', `Your games <span class="muted">${counts.mine}</span>`)}
+      <label class="sr-only" for="pz-theme">Theme</label>
+      <select id="pz-theme" class="select"><option value="">All themes</option>${themesHere.map((t) => `<option value="${t}" ${t === theme ? 'selected' : ''}>${esc(THEMES[t].name)}</option>`).join('')}</select>
+      <label class="sr-only" for="pz-level">Level</label>
+      <select id="pz-level" class="select"><option value="">All levels</option>${[1, 2, 3, 4, 5].map((l) => `<option value="${l}" ${l === level ? 'selected' : ''}>Level ${l}</option>`).join('')}</select>
+    </div>
+    ${items.length ? `
+    <div class="game">
+      <div class="stack" style="gap:12px"><div class="board-wrap" id="board"></div></div>
+      <div class="side">
+        <section class="card" id="pz-card" aria-live="polite"></section>
+        <div id="confirm" class="confirm-bar"></div>
+        <div class="actions" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+          <button class="btn" type="button" id="pz-hint">${ICON.hint}<span>Hint</span></button>
+          <button class="btn" type="button" id="pz-show">Show answer</button>
+          <button class="btn primary" type="button" id="pz-next"><span>Next</span>${ICON.arrow}</button>
+        </div>
+        <section class="card">
+          <h2 style="font-size:18px">Themes</h2>
+          <div class="theme-list">${themesHere.map((t) => {
+            const b = sum.byTheme[t] || { total: 0, solved: 0 };
+            const pct = b.total ? Math.round((100 * b.solved) / b.total) : 0;
+            return `<a class="theme-row ${t === theme ? 'on' : ''}" href="${link({ t: t === theme ? '' : t })}">
+              <span><b>${esc(THEMES[t].name)}</b><small class="muted">${esc(THEMES[t].blurb)}</small></span>
+              <span class="mono muted" style="font-size:12px">${b.solved}/${b.total}</span>
+              <span class="bar"><i style="width:${pct}%"></i></span></a>`;
+          }).join('')}</div>
+        </section>
+      </div>
+    </div>` : `<div class="card stack" style="max-width:640px"><p style="margin:0">${src === 'mine' ? 'No puzzles from your games yet. When you review a game and the analysis finds a forced win you missed, it becomes a puzzle here.' : 'No puzzles match these filters.'}</p>
+      ${src === 'mine' ? '<a class="btn" href="#/review">Review your games</a>' : `<a class="btn" href="#/puzzles">Show all puzzles</a>`}</div>`}`;
+  $('#pz-theme')?.addEventListener('change', (e) => { location.hash = link({ t: e.target.value }); });
+  $('#pz-level')?.addEventListener('change', (e) => { location.hash = link({ lv: e.target.value }); });
+  if (!items.length) return;
+
+  pz = { items, progress, token: 1, current: null };
+  view = new BoardView($('#board'), {
+    onPoint: (x, y, type) => {
+      const P = pz && pz.current;
+      if (!P || P.solved || P.busy || P.state.toMove !== P.you) return;
+      const why = illegalReason(P.state, x, y);
+      if (why) { toast(why); return; }
+      if (type === 'mouse' || (P.preview && P.preview[0] === x && P.preview[1] === y)) { pzAttempt(x, y); return; }
+      P.preview = [x, y]; pzDraw();
+    },
+    onHover: null,
+  });
+  const ro = new ResizeObserver(() => view && view.setLabels(view.svg.getBoundingClientRect().width >= 460));
+  ro.observe($('#board'));
+  $('#pz-hint').addEventListener('click', () => { const P = pz.current; if (P && !P.solved) { P.hinted = true; pzDraw(); } });
+  $('#pz-show').addEventListener('click', () => {
+    const P = pz.current;
+    if (!P || P.solved) return;
+    P.shown = true;
+    if (!P.recorded) { P.recorded = true; recordPuzzle(pz.progress, P.item.id, false); store.set(KEYS.puzzles, pz.progress); }
+    pzDraw();
+  });
+  $('#pz-next').addEventListener('click', () => {
+    const P = pz.current;
+    if (P && !P.solved && P.wrong && !P.recorded) { recordPuzzle(pz.progress, P.item.id, false); store.set(KEYS.puzzles, pz.progress); }
+    pzLoad(pickNext(pz.items, pz.progress, { exclude: P && P.item.id }));
+  });
+  pzLoad(pickNext(items, progress));
+}
+
+function pzLoad(item) {
+  const sym = item.source === 'champions' || item.source === 'mine' ? Math.floor(Math.random() * 8) : 0;
+  const puzzle = buildPuzzle(item, sym);
+  const state = setupPosition(puzzle.setup);
+  pz.token++;
+  pz.current = { item, puzzle, state, you: state.toMove, stage: 0, wrong: 0, hinted: false, shown: false, solved: false, recorded: false, preview: null, msg: null, busy: false, lastMove: null, seed: Math.floor(Math.random() * 1e6) };
+  pzDraw();
+}
+
+function pzDraw() {
+  const P = pz && pz.current;
+  if (!P || !view) return;
+  const sg = P.puzzle.stages[P.stage];
+  const isEmpty = (x, y) => P.state.board[y * 19 + x] === 0;
+  const rings = P.hinted && !P.solved && !P.shown ? hintRing(sg.answer, isEmpty, P.seed).map(([x, y]) => ({ x, y, color: '#1E7F79' })) : [];
+  view.render(P.state, {
+    last: P.lastMove,
+    ghost: P.preview ? [P.preview[0], P.preview[1], P.you] : null,
+    hints: P.shown && !P.solved ? [parseCoord(sg.answer)] : [],
+    rings,
+  });
+  const item = P.item;
+  const o = item.origin;
+  const youName = P.you === P1 ? 'Gold' : 'Blue';
+  const multi = P.puzzle.stages.length > 1;
+  let origin = '';
+  if (P.solved || P.shown) {
+    if (o.kind === 'master') origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From game ${o.n}, ${esc(o.round)}: ${esc(o.mover)} vs ${esc(o.opp)} (${esc(o.opening)}). <a href="#/review/wc83-${o.n}?side=${o.ply % 2 ? 'B' : 'W'}&at=${o.ply}">Replay the game</a>${P.puzzle.sym ? ' · shown rotated or mirrored' : ''}</p>`;
+    else if (o.kind === 'lesson') origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From lesson ${esc(o.lessonId)}, ${esc(o.lessonTitle)}. <a href="#/learn/${encodeURIComponent(o.lessonId)}?s=${o.step}">Open the lesson</a></p>`;
+    else origin = `<p class="muted" style="margin:10px 0 0;font-size:13px">From your game on ${esc(fmtDate(o.at))}. You played ${esc(o.played)}. <a href="#/review/${encodeURIComponent(o.gameId)}">Review the game</a></p>`;
+  }
+  const feedback = P.msg ? `<div class="note ${P.msg.kind}" style="margin-top:12px"><p>${esc(P.msg.text)}</p></div>` : '';
+  $('#pz-card').innerHTML = `
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+      <div class="eyebrow">${esc(THEMES[item.theme] ? THEMES[item.theme].name : 'Puzzle')} · Level ${item.level}${multi ? ` · Step ${Math.min(P.stage + 1, P.puzzle.stages.length)} of ${P.puzzle.stages.length}` : ''}</div>
+      <span class="badge">YOU: ${youName.toUpperCase()}</span>
+    </div>
+    <h2 style="font-size:22px;margin-top:6px">${esc(item.source === 'champions' ? 'Championship position' : item.title)}</h2>
+    <p style="margin:8px 0 0">${esc(P.solved ? 'Solved!' : sg.prompt)}</p>
+    ${P.hinted && !P.solved && sg.hint ? `<p class="muted" style="margin:8px 0 0;font-size:14px">Hint: ${esc(sg.hint)} The answer is one of the four ringed points.</p>` : ''}
+    ${P.shown && !P.solved ? `<p class="muted" style="margin:8px 0 0;font-size:14px">The answer is <span class="mono">${esc(sg.answer)}</span>. Play it to see what happens, or go to the next puzzle.</p>` : ''}
+    ${feedback}${origin}`;
+  const conf = $('#confirm');
+  if (P.preview && !P.solved && !P.busy) {
+    conf.innerHTML = `<div style="display:grid;grid-template-columns:1fr 2fr;gap:8px">
+      <button class="btn" type="button" id="pz-cancel">Cancel</button>
+      <button class="btn primary" type="button" id="pz-confirm">Play <span class="mono">${coordName(...P.preview)}</span></button></div>`;
+    $('#pz-confirm').addEventListener('click', () => pzAttempt(...P.preview));
+    $('#pz-cancel').addEventListener('click', () => { P.preview = null; pzDraw(); });
+  } else conf.innerHTML = P.busy ? '<div class="muted" style="font-size:13px;text-align:center">Checking…</div>' : '';
+  $('#pz-hint').disabled = P.solved || P.shown;
+  $('#pz-show').disabled = P.solved;
+  $('#pz-next').classList.toggle('primary', P.solved || P.shown);
+}
+
+function pzAttempt(x, y) {
+  const P = pz.current;
+  const sg = P.puzzle.stages[P.stage];
+  P.preview = null; P.busy = true; pzDraw();
+  const token = pz.token;
+  setTimeout(() => {
+    if (!pz || pz.token !== token) return;
+    const res = coordName(x, y) === sg.answer ? checkMove(P.state, x, y, { kind: 'legal' }) : checkMove(P.state, x, y, sg.goal);
+    P.busy = false;
+    if (!res.ok) {
+      P.wrong++;
+      P.msg = { kind: 'threat', text: `${coordName(x, y)}: ${failReason(P.state, x, y, sg.goal)}` };
+      pzDraw();
+      return;
+    }
+    if (res.record && res.record.captured.length) view.flashRemoved(res.record.captured, P.you === P1 ? '#3C5FD6' : '#E8B54A');
+    P.state = res.after;
+    P.lastMove = [x, y];
+    P.msg = { kind: 'opportunity', text: sg.success };
+    if (sg.reply && P.stage < P.puzzle.stages.length - 1) {
+      P.busy = true; pzDraw();
+      setTimeout(() => {
+        if (!pz || pz.token !== token) return;
+        const rec = applyMove(P.state, ...parseCoord(sg.reply));
+        if (rec.captured.length) view.flashRemoved(rec.captured, P.you === P1 ? '#E8B54A' : '#3C5FD6');
+        P.lastMove = parseCoord(sg.reply);
+        P.stage++;
+        P.busy = false;
+        P.msg = { kind: 'opportunity', text: `${sg.success} ${P.you === P1 ? 'Blue' : 'Gold'} played ${sg.reply}.` };
+        pzDraw();
+      }, 800);
+      return;
+    }
+    P.solved = true;
+    if (!P.recorded) {
+      P.recorded = true;
+      recordPuzzle(pz.progress, P.item.id, !P.wrong && !P.shown);
+      store.set(KEYS.puzzles, pz.progress);
+    }
+    pzDraw();
+    $('#pz-next')?.focus();
+  }, 30);
+}
+
 // ---------------------------------------------------------------------------
 // Patterns, play style and openings
 
@@ -756,7 +976,15 @@ function renderArchive(params) {
   $('#vf')?.addEventListener('change', (e) => { location.hash = link(f, e.target.value); });
 }
 
+function mastersTabs(view) {
+  return `<div class="filters" role="tablist" aria-label="1983 views">
+      <a class="chip ${view === 'games' ? 'on' : ''}" role="tab" aria-selected="${view === 'games'}" href="#/review?tab=masters">Games</a>
+      <a class="chip ${view === 'insights' ? 'on' : ''}" role="tab" aria-selected="${view === 'insights'}" href="#/review?tab=masters&view=insights">Insights</a>
+    </div>`;
+}
+
 function renderMasters(params) {
+  if (params.get('view') === 'insights') { renderMasterInsights(params); return; }
   const pf = params.get('p') || '';
   const of = params.get('o') || '';
   const players = [...new Set(PLAYABLE_1983.flatMap((g) => [g.white, g.black]))].sort((a, b) => a.split(' ').pop().localeCompare(b.split(' ').pop()));
@@ -783,6 +1011,7 @@ function renderMasters(params) {
       <p class="muted" style="margin:6px 0 0;max-width:760px">${PLAYABLE_1983.length} games between twenty of the world's best players (Boston, March 1983; Rollie Tesh won). Replay any game with the engine's analysis, follow either player, and play on from any position. Moves from the U.S. Pente Association's booklet <i>Championship Pente</i>.</p>
     </div>
     ${archiveTabs('masters')}
+    ${mastersTabs('games')}
     <div class="filters">
       <label class="sr-only" for="mp">Player</label>
       <select id="mp" class="select"><option value="">All players</option>${players.map((n) => `<option value="${esc(n)}" ${n === pf ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
@@ -816,6 +1045,219 @@ function renderMasters(params) {
   $('#mo').addEventListener('change', (e) => { location.hash = link(pf, e.target.value); });
 }
 
+
+// Chart colours (validated with the dataviz palette checker for light and dark surfaces):
+// winners = teal, losers = amber, Gold-first-player figures = cobalt.
+const VIZ = () => (document.documentElement.dataset.theme === 'dark'
+  ? { win: '#159C8F', lose: '#C08A1C', gold: '#6A82EA', mid: '#2A3368', ink: '#EEF0FA', faint: '#A6ADD0', surface: '#151B42' }
+  : { win: '#0E8F84', lose: '#B07C10', gold: '#2F44B0', mid: '#DDE1EE', ink: '#161B3D', faint: '#555D80', surface: '#FFFFFF' });
+
+function mixHex(a, b, t) {
+  const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+
+/** A board-shaped heatmap. cell(dx, dy) -> { t: -1..1 or 0..1, title }. */
+function heatSvg(reach, cell, { diverging = false, size = 300, label = '' } = {}) {
+  const c = VIZ();
+  const n = 2 * reach + 1, pad = 6, step = (size - 2 * pad) / n, gap = 2;
+  let rects = '';
+  for (let y = -reach; y <= reach; y++) for (let x = -reach; x <= reach; x++) {
+    const { t, title } = cell(x, y);
+    let fill;
+    if (diverging) fill = t >= 0 ? mixHex(c.mid, c.win, Math.min(1, t)) : mixHex(c.mid, c.lose, Math.min(1, -t));
+    else fill = mixHex(c.mid, c.win, Math.min(1, t));
+    rects += `<rect x="${pad + (x + reach) * step + gap / 2}" y="${pad + (y + reach) * step + gap / 2}" width="${step - gap}" height="${step - gap}" rx="3" fill="${fill}"><title>${esc(title)}</title></rect>`;
+  }
+  const mid = pad + reach * step + step / 2;
+  return `<svg viewBox="0 0 ${size} ${size}" class="heat" role="img" aria-label="${esc(label)}">${rects}
+    <circle cx="${mid}" cy="${mid}" r="3" fill="none" stroke="${c.ink}" stroke-width="1.5" opacity=".7"><title>Centre (K10)</title></circle></svg>`;
+}
+
+function heatLegend(diverging) {
+  const c = VIZ();
+  const stops = diverging ? [c.lose, c.mid, c.win] : [c.mid, c.win];
+  return `<div class="heat-legend"><span>${diverging ? 'Losers more' : 'Fewer'}</span><i style="background:linear-gradient(90deg,${stops.join(',')})"></i><span>${diverging ? 'Winners more' : 'More stones'}</span></div>`;
+}
+
+function renderMasterInsights(params = new URLSearchParams()) {
+  const st = masterStats();
+  const c = VIZ();
+  const o = st.overview, f = st.findings;
+  const ends = [['resigned', 'Resigned', c.gold], ['captures', 'Five captures', c.lose], ['five', 'Five in a row', c.win]];
+  const segBar = `<div class="seg" role="img" aria-label="${ends.map(([k, l]) => `${l} ${o.endings[k]}`).join(', ')}">${ends.map(([k, l, col]) => `<span style="flex:${o.endings[k]};background:${col}" title="${l}: ${o.endings[k]} games"></span>`).join('')}</div>
+    <div class="legend">${ends.map(([k, l, col]) => `<span><i style="background:${col}"></i>${l} ${o.endings[k]}</span>`).join('')}</div>`;
+
+  // Winners vs losers: dumbbells on a shared scale per row.
+  const dumb = st.habits.map((h) => {
+    const max = h.unit === '%' ? 100 : Math.max(1, Math.ceil(Math.max(h.winners, h.losers) * 1.25));
+    const xw = (100 * h.winners) / max, xl = (100 * h.losers) / max;
+    const [lo, hi] = [Math.min(xw, xl), Math.max(xw, xl)];
+    return `<div class="db-row" title="${esc(h.note)}">
+      <div class="db-label"><b>${esc(h.label)}</b><small class="muted">${esc(h.note)}</small></div>
+      <div class="db-track"><span class="db-line" style="left:${lo}%;width:${hi - lo}%"></span>
+        <span class="db-dot" style="left:${xl}%;background:${c.lose}" title="Losers: ${h.losers}${h.unit}"></span>
+        <span class="db-dot" style="left:${xw}%;background:${c.win}" title="Winners: ${h.winners}${h.unit}"></span></div>
+      <div class="db-vals mono"><span style="color:var(--text)">${h.winners}${h.unit}</span> <span class="muted">vs ${h.losers}${h.unit}</span></div>
+    </div>`;
+  }).join('');
+
+  const shapeRows = st.shapes.map((sh) => {
+    const max = Math.max(...st.shapes.flatMap((x) => [x.winners, x.losers]));
+    return `<div class="gb-row"><div class="gb-label">${esc(sh.label)}</div><div class="gb-bars">
+      <span style="width:${(100 * sh.winners) / max}%;background:${c.win}" title="Winners: ${sh.winners} per game"></span>
+      <span style="width:${(100 * sh.losers) / max}%;background:${c.lose}" title="Losers: ${sh.losers} per game"></span></div>
+      <div class="gb-vals mono">${sh.winners} <span class="muted">/ ${sh.losers}</span></div></div>`;
+  }).join('');
+
+  // Heatmaps
+  const H = st.heat, R0 = st.reach;
+  // Smoothed over each point and its neighbours, so the broad pattern shows rather than noise.
+  const smooth = (g, total) => (x, y) => {
+    let sum = 0, w = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const yy = y + dy + R0, xx = x + dx + R0;
+      if (yy < 0 || xx < 0 || yy > 2 * R0 || xx > 2 * R0) continue;
+      const k = dx || dy ? 1 : 2;
+      sum += g[yy][xx] * k; w += k;
+    }
+    return sum / w / total;
+  };
+  const wFreq = smooth(H.winners, H.winnerTotal);
+  const lFreq = smooth(H.losers, H.loserTotal);
+  let maxW = 0, maxD = 0;
+  for (let y = -R0; y <= R0; y++) for (let x = -R0; x <= R0; x++) { maxW = Math.max(maxW, wFreq(x, y)); maxD = Math.max(maxD, Math.abs(wFreq(x, y) - lFreq(x, y))); }
+  const name = (x, y) => coordName(x + 9, y + 9);
+  const heatWin = heatSvg(R0, (x, y) => ({ t: wFreq(x, y) / maxW, title: `${name(x, y)}: ${H.winners[y + R0][x + R0]} winners' stones` }), { label: 'Where winners placed stones' });
+  const heatDiff = heatSvg(R0, (x, y) => {
+    const d = wFreq(x, y) - lFreq(x, y);
+    return { t: d / maxD, title: `${name(x, y)}: winners ${H.winners[y + R0][x + R0]}, losers ${H.losers[y + R0][x + R0]}` };
+  }, { diverging: true, label: 'Where winners played more than losers' });
+
+  // Gold's second stone (folded to one eighth of the board)
+  const sec = st.second;
+  const maxSec = Math.max(...sec.map((x) => x.games));
+  const secRows = sec.map((x) => `<div class="mt-row"><span class="mono">${x.dx} out${x.dy ? `, ${x.dy} across` : ', in line'}</span>
+    <span class="mt-bar"><i style="width:${(100 * x.games) / maxSec}%;background:${c.gold}"></i></span>
+    <span class="mono">${x.games} games · Gold won ${Math.round((100 * x.goldWins) / x.games)}%</span></div>`).join('');
+
+  const maxOp = Math.max(...st.openings.map((x) => x.games));
+  const opRows = st.openings.map((x) => `<a class="mt-row" href="#/review?tab=masters&o=${encodeURIComponent(x.name)}" title="${x.moves ? esc(x.moves.join(' ')) : 'Openings that fit none of the named lines'}">
+    <span><b>${esc(x.name)}</b></span>
+    <span class="mt-bar"><i style="width:${(100 * x.games) / maxOp}%;background:${c.gold}"></i></span>
+    <span class="mono">${x.games} · Gold ${x.goldPct}%</span></a>`).join('');
+
+  const pl = st.players;
+  const plRows = pl.map((p) => `<tr>
+    <td><a href="#/review?tab=masters&p=${encodeURIComponent(p.name)}">${esc(p.name)}</a></td>
+    <td class="num mono">${p.wins}–${p.games - p.wins}</td>
+    <td class="num"><span class="mt-bar small"><i style="width:${p.winPct}%;background:${c.win}"></i></span> <span class="mono">${p.winPct}%</span></td>
+    <td class="num mono">${p.gold.wins}/${p.gold.games}</td><td class="num mono">${p.blue.wins}/${p.blue.games}</td>
+    <td class="num mono">${p.style.aggression}%</td><td class="num mono">${p.capturesPerGame}</td>
+    <td>${esc(p.style.label)}</td></tr>`).join('');
+
+  app.innerHTML = `
+    <div style="margin-bottom:14px">
+      <div class="eyebrow">Review</div>
+      <h1 style="font-size:28px;margin-top:4px">1983 World Championship</h1>
+      <p class="muted" style="margin:6px 0 0;max-width:760px">What separated winners from losers across ${o.games} games between ${o.players} of the world's best players. Hover or tap any mark for its numbers.</p>
+    </div>
+    ${archiveTabs('masters')}
+    ${mastersTabs('insights')}
+    <div class="ins-kpis">
+      <div class="card"><div class="eyebrow">Gold (moved first) won</div><div class="big-num">${o.goldPct}%</div><small class="muted">${o.goldWins} of ${o.games} games</small></div>
+      <div class="card"><div class="eyebrow">Captured first, then won</div><div class="big-num">${f.firstCapture.winPct}%</div><small class="muted">of ${f.firstCapture.games} games with a capture</small></div>
+      <div class="card"><div class="eyebrow">Made the first four, then won</div><div class="big-num">${f.firstFour.winPct}%</div><small class="muted">of ${f.firstFour.games} games</small></div>
+      <div class="card"><div class="eyebrow">Ahead on captures at move 10</div><div class="big-num">${f.leadAt20.winPct}%</div><small class="muted">won, in ${f.leadAt20.games} games with a lead</small></div>
+    </div>
+    <div class="ins-grid">
+      <section class="card ins-wide">
+        <h2 style="font-size:20px">What winners do differently</h2>
+        <p class="muted" style="margin:4px 0 12px;font-size:14px">Every game seen twice: once from the winner's side and once from the loser's. Winners force; losers react.</p>
+        <div class="legend" style="margin-bottom:8px"><span><i style="background:${c.win}"></i>Winners</span><span><i style="background:${c.lose}"></i>Losers</span></div>
+        ${dumb}
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">Shapes built per game</h2>
+        <p class="muted" style="margin:4px 0 12px;font-size:14px">Winners build threes and fours. Losers build pairs, which give the other side something to capture.</p>
+        <div class="legend" style="margin-bottom:8px"><span><i style="background:${c.win}"></i>Winners</span><span><i style="background:${c.lose}"></i>Losers</span></div>
+        ${shapeRows}
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">How games ended</h2>
+        <p class="muted" style="margin:4px 0 12px;font-size:14px">Masters resign as soon as a win can't be stopped. Average game: ${o.avgMoves} moves each. Winners captured ${f.capturesWinner} pairs a game, losers ${f.capturesLoser}.</p>
+        ${segBar}
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">Where winners played</h2>
+        <p class="muted" style="margin:4px 0 8px;font-size:14px">Every stone the winners placed, within 6 points of the centre (ringed).</p>
+        ${heatWin}${heatLegend(false)}
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">Winners vs losers, point by point</h2>
+        <p class="muted" style="margin:4px 0 8px;font-size:14px">Teal where winners put more of their stones than losers did, amber where losers did (smoothed over neighbouring points). The booklet records most games with Gold's second stone to the right of the centre, so the shape follows that layout: winners' extra stones run up and down through the centre, across the line of the opening.</p>
+        ${heatDiff}${heatLegend(true)}
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">Gold's second stone</h2>
+        <p class="muted" style="margin:4px 0 12px;font-size:14px">Distance from the centre, counting mirror images together. Under the tournament rule it has to be at least 3 out.</p>
+        ${secRows}
+      </section>
+      <section class="card">
+        <h2 style="font-size:20px">Openings</h2>
+        <p class="muted" style="margin:4px 0 12px;font-size:14px">Games per opening and how often Gold won. Tap one to see its games.</p>
+        ${opRows}
+      </section>
+      <section class="card ins-wide" id="explorer">${explorerHtml(params.get('ex') || 'Wedge')}</section>
+      <section class="card ins-wide">
+        <h2 style="font-size:20px">Players</h2>
+        <p class="muted" style="margin:4px 0 12px;font-size:14px">Every game each player played in this collection, including playoffs. "Forcing" is the share of their moves that made a threat.</p>
+        <div style="overflow-x:auto"><table class="mini-table"><thead><tr><th>Player</th><th class="num">W–L</th><th class="num">Win %</th><th class="num">As Gold</th><th class="num">As Blue</th><th class="num">Forcing</th><th class="num">Caps/game</th><th>Style</th></tr></thead><tbody>${plRows}</tbody></table></div>
+      </section>
+    </div>`;
+  const bindExplorer = () => $('#ex-op')?.addEventListener('change', (e) => {
+    $('#explorer').innerHTML = explorerHtml(e.target.value);
+    history.replaceState(null, '', `#/review?tab=masters&view=insights&ex=${encodeURIComponent(e.target.value)}`);
+    bindExplorer();
+  });
+  bindExplorer();
+}
+
+function explorerHtml(name) {
+  const named = Object.keys(OPENING_MOVES).filter((n) => (openingTree(n) || {}).games);
+  if (!named.includes(name)) name = named[0];
+  const t = openingTree(name);
+  const c = VIZ();
+  const top = t.next.slice(0, 3);
+  const plyNo = (ply) => `${Math.floor(ply / 2) + 1}${ply % 2 ? '…' : '.'}`;
+  const stones = t.prefixOffsets.map(([x, y], i) => ({ o: [x, -y], c: i % 2 === 0 ? 1 : 2 }))
+    .concat(top.map((n) => ({ o: [n.offset[0], -n.offset[1]], c: n.ply % 2 === 0 ? 1 : 2, ring: true })));
+  // Main line: follow the most played move while at least two games share it.
+  const main = [];
+  let node = { next: t.next };
+  while (node.next.length && node.next[0].games >= 2 && main.length < 6) { node = node.next[0]; main.push(node); }
+  const sideTo = top.length ? (top[0].ply % 2 === 0 ? 'Gold' : 'Blue') : '';
+  return `
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+      <h2 style="font-size:20px">Opening explorer</h2>
+      <label class="sr-only" for="ex-op">Opening</label>
+      <select id="ex-op" class="select">${named.map((n) => `<option ${n === name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+    </div>
+    <p class="muted" style="margin:4px 0 12px;font-size:14px">What the masters played after the opening's defining moves (<span class="mono">${esc(t.prefix.join(' '))}</span>), with games turned to line up. ${t.games} games; Gold won ${t.goldPct}%.</p>
+    <div class="ex-wrap">
+      <div>${openingSvg(stones, 220)}<p class="muted" style="font-size:12px;margin:6px 0 0;text-align:center">Dashed rings: ${esc(sideTo)}'s most played next moves</p></div>
+      <div>
+        <table class="mini-table"><thead><tr><th>Next move (${esc(sideTo)})</th><th class="num">Games</th><th class="num">${esc(sideTo)} won</th><th>Example</th></tr></thead><tbody>
+        ${t.next.slice(0, 6).map((n) => `<tr><td class="mono">${esc(n.move)}</td><td class="num mono">${n.games}</td>
+          <td class="num"><span class="mt-bar small"><i style="width:${n.moverWinPct}%;background:${c.win}"></i></span> <span class="mono">${n.moverWinPct}%</span></td>
+          <td><a href="#/review/wc83-${n.gameNumbers[0]}?at=${n.ply + 1}">Game ${n.gameNumbers[0]}</a></td></tr>`).join('')}
+        </tbody></table>
+        ${main.length ? `<p style="margin:12px 0 0;font-size:14px"><b>Main line:</b> <span class="mono">${main.map((m) => `${plyNo(m.ply)} ${m.move}`).join(' ')}</span> <span class="muted">(${main[main.length - 1].games} games got this far; the side that played the last move won ${main[main.length - 1].moverWinPct}%)</span></p>` : ''}
+      </div>
+    </div>`;
+}
+
 let rv = null; // the review screen's state
 
 function leaveReview() {
@@ -841,7 +1283,7 @@ function renderReview(id, params = new URLSearchParams()) {
   const labels = g
     ? { mine: `${viewName.split(' ').pop()}'s accuracy`, theirs: otherName.split(' ').pop(), chances: `${viewName.split(' ').pop()}'s winning chances`, none: `No big mistakes by ${viewName.split(' ').pop()}.`, retry: 'Play on from here (vs Vega)' }
     : { mine: 'Your accuracy', theirs: bot.name, chances: 'Your winning chances', none: 'No mistakes big enough to count as key moments. Well played.', retry: 'Retry from here' };
-  rv = { entry, variant, bot, names, labels, cursor: entry.moves.length, review: null, showBest: true, token: 1, onKey: null };
+  rv = { entry, variant, bot, names, labels, cursor: params.has('at') ? Math.max(0, Math.min(entry.moves.length, Number(params.get('at')) || 0)) : entry.moves.length, review: null, showBest: true, token: 1, onKey: null };
 
   const head = g ? `
     <div class="game-head" style="margin-bottom:12px">

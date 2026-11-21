@@ -56,7 +56,7 @@ function lineOf(coords) {
  * capturing, or winning on the spot; any other reply loses at once.
  */
 /** Time limit for forced-win checks. Tests raise it so a slow CI machine can't fail a sound puzzle. */
-export const SEARCH = { forcedWinMs: 2500 };
+export const SEARCH = { forcedWinMs: 2500, replyMs: 300, replyNodes: 12000 };
 
 export function isForcedWin(after, you, budgetMs = SEARCH.forcedWinMs) {
   if (after.winner === you) return true;
@@ -83,7 +83,7 @@ export function isForcedWin(after, you, budgetMs = SEARCH.forcedWinMs) {
     let ok;
     if (after.winner !== null) ok = after.winner === you;
     else if (winningPointsFor(after, you).length) ok = true;
-    else ok = !!findVCF(after, you, 8, Math.min(deadline, Date.now() + 300), 12000);
+    else ok = !!findVCF(after, you, 8, Math.min(deadline, Date.now() + SEARCH.replyMs), SEARCH.replyNodes);
     undoMove(after);
     if (!ok) return false;
   }

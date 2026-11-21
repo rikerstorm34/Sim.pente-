@@ -4,7 +4,9 @@ import { UNITS, ALL_LESSONS, getLesson, nextLesson } from '../js/lessons.js';
 import { BUSY } from '../js/lesson-boards.js';
 import { setupPosition, checkMove, parseCoord, SEARCH } from '../js/lesson-engine.js';
 
-SEARCH.forcedWinMs = 12000; // generous for slow CI machines; the app uses 2.5 s
+SEARCH.forcedWinMs = 12000;
+SEARCH.replyMs = 2000;
+SEARCH.replyNodes = 80000; // generous for slow CI machines; the app uses 2.5 s
 import { applyMove } from '../js/rules.js';
 import { VARIANTS } from '../js/variants.js';
 import { LEVELS } from '../js/ai.js';
@@ -12,7 +14,7 @@ import { LEVELS } from '../js/ai.js';
 test('lesson ids are unique and in order', () => {
   const ids = ALL_LESSONS.map((l) => l.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.equal(UNITS.length, 10);
+  assert.equal(UNITS.length, 11);
   assert.equal(getLesson('1.1').title, 'Five in a row');
   assert.equal(nextLesson('1.1').id, '1.2');
 });

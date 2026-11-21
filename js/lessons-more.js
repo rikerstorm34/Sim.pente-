@@ -2,7 +2,9 @@
 // players (pente.org analysis forum, renju theory). All text is original writing; every
 // puzzle is verified by tests/lessons.test.js like the rest.
 import { read, puzzle, stage, play, G, ALL } from './lesson-dsl.js';
-import { coordName, CENTER } from './rules.js';
+import { coordName, CENTER, parseCoord } from './rules.js';
+
+const line = (...names) => names.map(parseCoord); // moves for a practice game that starts mid-opening
 
 // G-Pente: legal second stones on the ring three points out (not on the centre's row or column).
 const G_RING = [];
@@ -361,6 +363,134 @@ export const MORE_UNITS = [
             stage('Round 1, game 16. Peter Hudson (Gold) to play against Ken Krenz. Find the chain of fours that wins.', ALL(G('four'), G('forcedWin')), 'F12',
               'Your first four runs along row 12.', 'Hudson found it at the board: F12 starts a chain of fours that Krenz couldn\'t stop.'),
           ]),
+        ],
+      },
+    ],
+  },
+  // ===========================================================================
+  {
+    id: 'u11', title: 'Openings of the masters', blurb: 'The openings the 1983 world championship was fought with, and what the numbers say about them.',
+    lessons: [
+      {
+        id: '11.1', title: 'The Wedge', summary: 'The most played opening of 1983, and Gold\'s best weapon.',
+        steps: [
+          read('Gold\'s favourite', [
+            'Blue answers the centre with a stone touching it diagonally. Gold puts the second stone three points to the side, and Blue sits right on top of it. Gold\'s third stone then goes into the gap between Blue\'s two stones, one point up from the row. That is the Wedge.',
+            'The wedge stone splits Blue\'s two stones and lines up with both of Gold\'s, but it also lives between enemy stones, so captures start early. In the main line both sides lose pairs before move ten, and the game becomes a fight over who keeps their last pairs safe.',
+            'In 1983 it was the most played opening by far: 34 of the 109 games, and Gold won 71% of them. In the main line, Blue almost always answered with the stone just above its own (24 of 27 games), and Gold always replied by touching the centre from the side, right under Blue\'s new column (24 of 24).',
+            'Learn the first nine moves of the main line, then the tactics that came up in real Wedge games.',
+          ], { p1: ['K10', 'N10', 'M11'], p2: ['L11', 'N11'], hints: ['M11'] }),
+          puzzle('Gold\'s third stone', 1, { moves: ['K10', 'L11', 'N10', 'N11'] }, [
+            stage('Blue has answered on the diagonal and on top of Gold\'s second stone. Play Gold\'s third stone the way the 1983 masters did.', G('points', { points: ['M11'] }), 'M11',
+              'Slip into the gap between Blue\'s two stones.', 'That\'s the Wedge. Gold played it in 34 games and won 71% of them.'),
+          ]),
+          puzzle('Blue\'s usual answer', 1, { moves: ['K10', 'L11', 'N10', 'N11', 'M11'] }, [
+            stage('Now you are Blue. In 24 of 27 Wedge games, Blue answered with the same move. Find it.', G('points', { points: ['L12'] }), 'L12',
+              'Stack a stone on top of your first stone.', 'The main line. It defends and prepares an attack on Gold\'s pairs.'),
+          ]),
+          puzzle('Gold touches the centre', 1, { moves: ['K10', 'L11', 'N10', 'N11', 'M11', 'L12'] }, [
+            stage('Gold again. Every master in this position played the same move. Find it.', G('points', { points: ['L10'] }), 'L10',
+              'Touch the centre stone from the side, under Blue\'s column.', 'Gold\'s stones now form a solid row with the wedge stone above it.'),
+          ]),
+          puzzle('Game 10: Hawkins', 2, { moves: ["K10","L9","K7","L7","L8","M9","K9","J6","K11","K8","M6","J7","N9"] }, [
+            stage('Round 1, game 10. You are Hawkins (Blue). Justice threatens to capture one of your pairs. Save it without letting them start a winning attack.', {all: [{kind: 'noCaptures'},{kind: 'stopForced'}]}, 'J9',
+              'Extend, block the open end, or capture the attacker.', 'Hawkins found it at the board.'),
+          ]),
+          puzzle('Game 33: Hawkins', 3, { moves: ["K10","L11","N10","N11","M11","L12","L10","O9","L13","J10","M10","M9","L11","L12","N9","L9","L11","K12","J9","M12","O10","M12","J12","P10","P7","O8"] }, [
+            stage('Round 2, game 33. You are Hawkins (Gold). One capture takes away a stone that blocks your line and makes a four at the same time. Find it.', {all: [{kind: 'capture'},{kind: 'four'}]}, 'O7',
+              'Look at the stones blocking your lines. Is one of them part of a pair?', 'Hawkins found it at the board.'),
+          ]),
+          puzzle('Game 30: Comberrel', 4, { moves: ["K10","L11","K13","L13","L12","M11","K11","J14","N11","K12","J11","K9","M14","M11","L9","L10"] }, [
+            stage('Round 2, game 30. You are Comberrel (Gold). Tesh has a winning chain of fours ready. Find the move that stops it.', {kind: 'stopForced'}, 'J8',
+              'Find the stone their first four needs, or a capture that breaks their line.', 'Comberrel found it at the board.'),
+          ]),
+          play('Play the Wedge', 'Play Gold from the Wedge\'s main line against Vega (Level 4). The captures start right away, so keep your pairs covered.',
+            { variantId: 'pente', level: 4, side: 'p1', coachMode: 'quiet', moves: line('K10', 'L11', 'N10', 'N11', 'M11', 'L12') }),
+        ],
+      },
+      {
+        id: '11.2', title: 'The Hammer', summary: 'Why Gold avoids one natural move, and how Blue punishes it.',
+        steps: [
+          read('A natural move that loses', [
+            'Same start as the Wedge: Blue touches the centre diagonally and sits on top of Gold\'s second stone. But this time Gold\'s third stone goes two points straight above the centre.',
+            'It looks harmless, but Blue fills the gap between its two stones and has three in a row at once, aimed at Gold\'s side of the board. The strong players called Blue\'s shape the hammer.',
+            'In 1983, Gold won only 22% of the games where this came up (2 of 9). Players learned to stop it: the Wedge, for example, takes the gap point first.',
+          ], { p1: ['K10', 'N10', 'K12'], p2: ['L11', 'N11'], hints: ['M11'] }),
+          puzzle('Swing the hammer', 1, { moves: ['K10', 'L11', 'N10', 'N11', 'K12'] }, [
+            stage('You are Blue. Gold\'s third stone missed the key point. Take it.', ALL(G('tria'), G('points', { points: ['M11'] })), 'M11',
+              'Fill the gap between your two stones.', 'An open three, and Gold has to answer it. In 1983 Blue won 4 of the 5 games that reached this point.'),
+          ]),
+          puzzle('Gold takes the key point', 1, { moves: ['K10', 'L11', 'N10', 'N11'] }, [
+            stage('Gold to play. Which point stops Blue from ever forming the hammer?', G('points', { points: ['M11'] }), 'M11',
+              'Where would Blue fill in to make three?', 'Taking the gap first is exactly the Wedge. Same point, opposite purpose.'),
+          ]),
+          puzzle('Game 38: Rustad', 2, { moves: ["K10","N11","N10","L11","K12","L9","K11","K9","K13","K14","M9","M10","J9","H8","N9","N8","H13","M12","L13","J13","J12","L10","H12","H11","L15"] }, [
+            stage('Round 2, game 38. You are Rustad (Blue). You can capture more than one pair, but only one capture is safe. Find it.', {all: [{kind: 'capture'},{kind: 'safe'},{kind: 'stopForced'}]}, 'L14',
+              'After each capture, check what your opponent can capture back or attack.', 'Rustad found it at the board.'),
+          ]),
+          puzzle('Game 68: Webber', 3, { moves: ["K10","L11","K13","L13","M10","L12","L10","J10","J11","H12","M8","L9","N10","O10","K11","J12","K12"] }, [
+            stage('Round 4, game 68. You are Webber (Blue). One capture takes away a stone that blocks your line and makes a four at the same time. Find it.', {all: [{kind: 'capture'},{kind: 'four'}]}, 'M9',
+              'Look at the stones blocking your lines. Is one of them part of a pair?', 'Webber found it at the board.'),
+          ]),
+          puzzle('Game 7: Wallace', 4, { moves: ["K10","L11","K13","L13","M10","L12","L10","J10","M12","K11","M13","L15","L14","K15","N12","O12","N12","M15","N10","O10"] }, [
+            stage('Round 1, game 7. You are Wallace (Gold). Find the chain of fours that wins.', {all: [{kind: 'four'},{kind: 'forcedWin'}]}, 'O11',
+              'Every move has to make a four.', 'Wallace found it at the board.'),
+          ]),
+          puzzle('Game 68: Webber', 4, { moves: ["K10","L11","K13","L13","M10","L12","L10","J10","J11","H12","M8","L9","N10","O10","K11","J12","K12","M9","L10","L15","L14","M15","L14","K9","J9"] }, [
+            stage('Round 4, game 68. You are Webber (Blue). Find the chain of fours that wins.', {all: [{kind: 'four'},{kind: 'forcedWin'}]}, 'O9',
+              'Every move has to make a four.', 'Webber found it at the board.'),
+          ]),
+          play('Play the hammer', 'Play Blue against Vega (Level 4) from the position where Gold has just made the mistake.',
+            { variantId: 'pente', level: 4, side: 'p2', coachMode: 'quiet', moves: line('K10', 'L11', 'N10', 'N11', 'K12') }),
+        ],
+      },
+      {
+        id: '11.3', title: 'Wallace\'s opening', summary: 'A Blue system that beat Gold five times in six.',
+        steps: [
+          read('Blue strikes from a distance', [
+            'Blue touches the centre from directly above. When Gold puts the second stone three points to the side, Blue doesn\'t follow it: Blue plays two to the side and three up, far from everything.',
+            'The far stone doesn\'t block anything yet. It waits to combine with Blue\'s first stone, so Gold\'s natural developing moves can run into it.',
+            'It is named after Dave Wallace, and in 1983 Gold won only 1 of the 6 games that followed this line. After Gold\'s most common reply, Blue built a column next to the centre and won all three of those games.',
+          ], { p1: ['K10', 'N10'], p2: ['K11', 'M13'], hints: ['M13'] }),
+          puzzle('The surprise stone', 1, { moves: ['K10', 'K11', 'N10'] }, [
+            stage('You are Blue. Play Wallace\'s far-off second stone.', G('points', { points: ['M13'] }), 'M13',
+              'Two points to the right and three up from the centre.', 'Far from the action now, but it lines up with your first stone.'),
+          ]),
+          puzzle('Wallace\'s follow-up', 1, { moves: ['K10', 'K11', 'N10', 'M13', 'L12'] }, [
+            stage('Gold played between your stones, as most masters did. Blue answered the same way every time it won. Find it.', G('points', { points: ['K13'] }), 'K13',
+              'Grow the column above the centre.', 'Blue won all three games with this move.'),
+          ]),
+          puzzle('Game 8: Webber', 2, { moves: ["K10","K9","N10","M7","L8","K7","L10","M10","L9","L7","N7","J10"] }, [
+            stage('Round 1, game 8. You are Webber (Gold). Wallace threatens to capture one of your pairs. Save it without letting them start a winning attack.', {all: [{kind: 'noCaptures'},{kind: 'stopForced'}]}, 'L10',
+              'Extend, block the open end, or capture the attacker.', 'Webber found it at the board.'),
+          ]),
+          puzzle('Game 48: Wallace', 3, { moves: ["K10","K11","G10","H13","G12","J12","G14","M9","L10","J10","G11","G13","F13","J13","J11","L12","H9","N14","M13","K13","J14","J13","M11","K13","L13"] }, [
+            stage('Round 3, game 48. You are Wallace (Blue). One capture takes away a stone that blocks your line and makes a four at the same time. Find it.', {all: [{kind: 'capture'},{kind: 'four'}]}, 'N13',
+              'Look at the stones blocking your lines. Is one of them part of a pair?', 'Wallace found it at the board.'),
+          ]),
+          puzzle('Game 66: Hawkins', 5, { moves: ["K10","J10","K13","G12","H11","J12","H13","J11","J13","L13","J9","L11","H10","H9","H12","H14","K11","K14","G8","G11"] }, [
+            stage('Round 4, game 66. You are Hawkins (Gold). Find the chain of fours that wins.', {all: [{kind: 'four'},{kind: 'forcedWin'}]}, 'H9',
+              'Every move has to make a four.', 'Hawkins found it at the board.'),
+          ]),
+          play('Play Wallace\'s opening', 'Play Blue against Vega (Level 4) from this position.',
+            { variantId: 'pente', level: 4, side: 'p2', coachMode: 'quiet', moves: line('K10', 'K11', 'N10', 'M13', 'L12') }),
+        ],
+      },
+      {
+        id: '11.4', title: 'Choosing your opening', summary: 'What the numbers say, and openings for both sides.',
+        steps: [
+          read('By the numbers', [
+            'Across all 109 games, Gold won 57%: moving first is an advantage even with the tournament rule.',
+            'Gold\'s second stone went three points out in a straight line in 77 games, and four out in 25. The results were the same (56% either way), so the choice is about style: three out keeps the stones in touch, four out keeps more space.',
+            'Openings that helped Gold most: the Wedge (71% of 34 games) and the Potential, where Blue\'s first stone goes two points from the centre instead of touching it (Gold won 4 of 5). Openings that helped Blue most: the Hammer and Wallace\'s opening (Gold won 22% and 14%).',
+            'Explore every opening and its main lines in Review, under 1983 World Championship → Insights.',
+          ]),
+          puzzle('Name the opening', 1, { moves: ['K10', 'L11', 'N10', 'N11'] }, [
+            stage('Gold to play. Which third stone starts the opening Gold won 71% of the time with?', G('points', { points: ['M11'] }), 'M11',
+              'The most played opening of 1983.', 'The Wedge.'),
+          ]),
+          play('Your choice', 'Play Gold against Vega (Level 4) and use one of the openings from this unit. Afterwards, check the game in Review to see how it compares with the masters.',
+            { variantId: 'pente', level: 4, side: 'p1', coachMode: 'quiet' }),
         ],
       },
     ],

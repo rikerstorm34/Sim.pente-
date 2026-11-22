@@ -20,6 +20,13 @@ A training app for the game of Pente: practice bots at five levels, a live coach
 
 Coming in later milestones: a bigger related game (Othello, Hex or Go on a small board).
 
+## Reversi and Hex
+
+Two more games, each in its own section (switch games with the bar under the header), with nothing shared with Pente except the look:
+
+- **Reversi** (Othello rules): bots at five levels (the top ones play the endgame perfectly), a coach for corners, X- and C-squares, mobility and parity, 6 units of lessons (14 lessons), about 650 engine-checked puzzles (exact endgames among them), game records with move-by-move analysis, and stats on corners, mobility and openings.
+- **Hex** on 7×7, 9×9 and 11×11 boards, with the optional swap rule: bots at five levels (Monte Carlo search at the top), a coach for bridges, blocks and the race to connect, 6 units of lessons (12 lessons), about 500 puzzles (finish, block, save the bridge, double threats, unbreakable chains), game records with analysis, and stats on bridges, blocking and board sizes.
+
 ## Running it locally
 
 It's a static site with no build step. Serve the folder with any web server, e.g.
@@ -49,6 +56,10 @@ Uses Node's built-in test runner (Node 18+); there are no dependencies to instal
 | `js/ai.js` | The bots: threat search (VCF), alpha-beta with a time budget, five levels |
 | `js/openings.js` | Choose-your-side openings (D-Pente, DK-Pente, Swap2): turn order, choices, bot set-ups |
 | `js/connect6.js` | Connect6 bot, coach helpers and review analysis |
+| `js/games/shell.js` | Shared screens for the Reversi and Hex sections (home, play, lessons, puzzles, records, review, stats) |
+| `js/games/worker.js` | Runs the Reversi and Hex bots and analysis off the main thread |
+| `js/reversi/`, `js/hex/` | Rules, bots, coach, lessons, puzzle banks and board drawing for each game |
+| `tools/reversi-puzzles.mjs`, `tools/hex-puzzles.mjs` | Generate the puzzle banks from bot games |
 | `js/history.js` | The saved game archive (compact storage, 5000 openable games, variations) |
 | `js/stats.js` | Statistics computed from the saved game archive |
 | `js/patterns.js` | Play style, shape and opening analytics |
@@ -63,3 +74,4 @@ Uses Node's built-in test runner (Node 18+); there are no dependencies to instal
 | `tests/` | Rules and bot tests |
 
 Pente® is a trademark of Hasbro, Inc. This is an independent, non-commercial training tool and is not affiliated with or endorsed by Hasbro.
+Othello® is a registered trademark of MegaHouse Corporation; the app's Reversi section uses the standard rules of the game and is not affiliated with MegaHouse or the World Othello Federation. Hex is a public-domain game invented by Piet Hein and John Nash.

@@ -169,18 +169,75 @@ function parseHash() {
   const [path, query = ''] = h.split('?');
   return { path, params: new URLSearchParams(query) };
 }
+// ---------------------------------------------------------------------------
+// Other games (Reversi, Hex): each has its own section, loaded on first visit.
+
+const FAMILIES = {
+  reversi: () => import('./reversi/def.js').then((m) => m.REVERSI),
+  hex: () => import('./hex/def.js').then((m) => m.HEX),
+};
+const shells = {};
+let activeFamily = null;
+let routeSeq = 0;
+
+const NAV_LABELS = { home: 'Home', learn: 'Learn', play: 'Play', puzzles: 'Puzzles', review: 'Review', stats: 'Stats', variants: 'Variants' };
+const PENTE_HREFS = { home: '#/', learn: '#/learn', play: '#/setup', puzzles: '#/puzzles', review: '#/review', stats: '#/stats', variants: '#/variants' };
+function setNav(family, key) {
+  const fam = family || 'pente';
+  document.querySelectorAll('[data-nav]').forEach((a) => {
+    const k = a.dataset.nav;
+    a.href = family ? `#/${family}${{ home: '', learn: '/learn', play: '/play', puzzles: '/puzzles', review: '/review', stats: '/stats', variants: '/rules' }[k]}` : PENTE_HREFS[k];
+    const label = family && k === 'variants' ? 'Rules' : NAV_LABELS[k];
+    const last = a.lastChild;
+    if (last && last.nodeType === 3) last.textContent = label; else a.textContent = label;
+    if (k === key) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('[data-family]').forEach((a) => {
+    if (a.dataset.family === fam) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  document.body.dataset.family = fam;
+}
+
+function routeFamily(fam, sub, params) {
+  const seq = routeSeq;
+  if (activeFamily && activeFamily !== fam && shells[activeFamily]) shells[activeFamily].leave();
+  activeFamily = fam;
+  const go = (sh) => {
+    if (seq !== routeSeq) return;
+    sh.leave();
+    document.body.classList.toggle('in-game', sub === '/game');
+    setNav(fam, sh.navKey(sub));
+    sh.render(sub, params);
+    window.scrollTo(0, 0);
+  };
+  if (shells[fam]) { go(shells[fam]); return; }
+  app.innerHTML = '<p class="muted">Loading…</p>';
+  Promise.all([FAMILIES[fam](), import('./games/shell.js')]).then(([def, shell]) => {
+    shells[fam] = shell.createShell(def, { toast, ICON });
+    go(shells[fam]);
+  }).catch((err) => { console.error(err); app.innerHTML = '<div class="card"><p style="margin:0">This section could not load. Check your connection and reload.</p></div>'; });
+}
+
 function route() {
+  routeSeq++;
   setFrame(19); // screens with a smaller board (Renju) set their own
   const { path, params } = parseHash();
+  const fam = path.split('/')[1];
+  if (FAMILIES[fam]) {
+    leaveGame(); leaveReview(); leaveLesson(); leavePuzzles();
+    routeFamily(fam, path.slice(fam.length + 1), params);
+    return;
+  }
+  if (activeFamily && shells[activeFamily]) shells[activeFamily].leave();
+  activeFamily = null;
+  setNav(null, null);
   const reviewId = path.startsWith('/review/') ? decodeURIComponent(path.slice(8)) : null;
   const lessonId = path.startsWith('/learn/') ? decodeURIComponent(path.slice(7)) : null;
   const fn = reviewId ? () => renderReview(reviewId, params) : lessonId ? () => renderLesson(lessonId, params) : routes[path] || renderHome;
   document.body.classList.toggle('in-game', path === '/play');
   const inLessonGame = path === '/play' && (store.get(KEYS.game, null) || {}).lesson;
   const navKey = inLessonGame ? 'learn' : { '': 'home', '/': 'home', '/setup': 'play', '/play': 'play', '/variants': 'variants', '/learn': 'learn', '/review': 'review', '/puzzles': 'puzzles', '/stats': 'stats' }[path] || (reviewId ? 'review' : lessonId ? 'learn' : 'home');
-  document.querySelectorAll('[data-nav]').forEach((a) => {
-    if (a.dataset.nav === navKey) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
-  });
+  setNav(null, navKey);
   if (path !== '/play') leaveGame();
   leaveReview();
   leaveLesson();

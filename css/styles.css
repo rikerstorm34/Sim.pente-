@@ -381,3 +381,18 @@ body.in-game .tabbar { display: none; }
 .choice-btn .stone { width: 26px; height: 26px; }
 .choice-btn span:last-child { display: flex; flex-direction: column; }
 .choice-btn small { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+/* ---------- Game switcher: Pente, Reversi, Hex each have their own section ---------- */
+.family-bar { display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface); overflow-x: auto; }
+.family-bar .family-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.family-bar a { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; text-decoration: none;
+  color: var(--muted); font-weight: 600; font-size: 14px; border: 1px solid var(--border); white-space: nowrap; }
+.family-bar a:hover { color: var(--text); }
+.family-bar a[aria-current="page"] { color: var(--text); background: var(--surface2); border-color: var(--accent); }
+.fam-icon { width: 16px; height: 16px; display: inline-block; flex-shrink: 0; }
+.fam-icon.pente { background: radial-gradient(circle at 35% 30%, #FFF6DA, #D59A2A 60%, #9A6410); border-radius: 50%; box-shadow: 6px 0 0 -1px #3C5FD6; margin-right: 6px; }
+.fam-icon.reversi { border-radius: 50%; background: linear-gradient(90deg, #E3A93A 0 50%, #3C5FD6 50% 100%); }
+.fam-icon.hex { background: #3C5FD6; clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%); }
+.family-hero { background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%); }
+.result-card .result-actions { margin-top: 4px; }
